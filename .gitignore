@@ -4,6 +4,14 @@ diggerIOSUITests
 *~
 Assets.xcassets
 Base.lproj
+diggerIOS/docroot/css
+diggerIOS/docroot/docs
+diggerIOS/docroot/img
+diggerIOS/docroot/index.html
+diggerIOS/docroot/js/app.js
+diggerIOS/docroot/js/jtmin.js
+diggerIOS/docroot/js/amd
+!diggerIOS/docroot/js/amd/svc.js
 
 
 # Xcode
