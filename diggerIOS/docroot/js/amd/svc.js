@@ -7,14 +7,74 @@ app.svc = (function () {
 
     var mgrs = {};  //general container for managers
 
+    //song database processing
+    mgrs.sg = (function () {
+        var dbstatdiv = "topdlgdiv";
+        var apresloadcmd = "";
+    return {
+        verifyDatabase: function (dbo) {
+            var stat = app.top.dispatch("dbc", "verifyDatabase", dbo);
+            if(stat.verified) { return dbo; }
+            jt.log("svc.db.verifyDatabase re-initializing dbo, received " +
+                   JSON.stringify(stat));
+            dbo = {version:mgrs.gen.plat("appversion"),
+                   scanned:"",  //ISO latest walk of song files
+                   songcount:0,
+                   //songs are indexed by relative path off of musicPath e.g.
+                   //"artistFolder/albumFolder/disc#?/songFile"
+                   songs:{}};
+            return dbo; },
+        loadLibrary: function (procdivid, apresload) {
+            dbstatdiv = procdivid || "topdlgdiv";
+            apresloadcmd = apresload || "";
+            jt.log("svc.sg.loadLibrary media read request not implemented."); }
+    };  //end mgrs.sg returned functions
+    }());
+
+
     //Local manager handles local environment interaction
     mgrs.loc = (function () {
         var config = null;
-        // var dbo = null;
+        var dbo = null;
+        function failsafeJSONParse (jstr, dflt, fname) {
+            var val = null;
+            jstr = jstr || dflt;
+            fname = fname || "";
+            try {
+                val = JSON.parse(jstr);
+            } catch(e) {
+                jt.err(fname + " JSON read failed: " + e);
+            }
+            return val; }
     return {
         getConfig: function () { return config; },
+        getDigDat: function () { return dbo; },
         loadInitialData: function () {
-            jt.log("loadInitialData not implemented yet"); }
+            mgrs.ios.call("readConfig", null, function (cj) {
+                config = failsafeJSONParse(cj, "{}", "readConfig");
+                mgrs.ios.call("readDigDat", null, function (dj) {
+                    dbo = failsafeJSONParse(dj, "{}", "readDigDat");
+                    config = config || {};  //default account set up in top.js
+                    dbo = mgrs.sg.verifyDatabase(dbo);
+                    //let rest of app know data is ready, then check library:
+                    const startdata = {"config":config, songdata:dbo};
+                    const uims = ["top",      //display login name
+                                  "filter"];  //show settings, app.deck.update
+                    uims.forEach(function (uim) {
+                        app[uim].initialDataLoaded(startdata); });
+                    if(!dbo.scanned) {
+                        setTimeout(mgrs.sg.loadLibrary, 50); } }); }); },
+        loadDigDat: function (cbf) {
+            mgrs.ios.call("readDigDat", null, function (dj) {
+                dbo = failsafeJSONParse(dj, "{}", "readDigDat");
+                dbo = mgrs.sg.verifyDatabase(dbo);
+                cbf(dbo); }); },
+        noteUpdatedState: function (/*label*/) {
+            //If label === "deck" and the IOS platform needs to keep info
+            //outside the app UI, this is the place to update that data
+            return; },
+        fetchSongs: function (contf/*, errf*/) {  //call stack as if web call
+            setTimeout(function () { contf(dbo.songs); }, 50); }
     };  //end mgrs.loc returned functions
     }());
 
@@ -23,37 +83,62 @@ app.svc = (function () {
     //separate processes with no synchronous support, so queue calls to avoid
     //unintuitive sequencing, deadlock, starvation etc.
     mgrs.ios = (function () {
-        const qs = {"main":{q:[], maxlag:10 * 1000},
-                    "hubc":{q:[], maxlag:30 * 1000}};
+        const qs = {"main":{q:[], cc:0, maxlag:10 * 1000},
+                    "hubc":{q:[], cc:0, maxlag:30 * 1000}};
         function callIOS (queueName, mqo) {
-            const msg = JSON.stringify({qname:queueName, fname:mqo.fname,
-                                        pobj:mqo.pobj});
+            var param = mqo.pobj || "";
+            if(param && typeof param === "object") {  //object or array
+                param = JSON.stringify(param); }
+            const msg = (queueName + ":" + mqo.msgnum + ":" + mqo.fname + ":" +
+                         param);
             jt.log("callIOS: " + msg);
             window.webkit.messageHandlers.diggerMsgHandler.postMessage(msg); }
     return {
         call: function (iosFuncName, paramObj, callback, qname) {
+            var cruft = null;
             qname = qname || "main";
             paramObj = paramObj || "";
+            qs[qname].cc += 1;
             qs[qname].q.push({fname:iosFuncName, pobj:paramObj, cbf:callback,
-                              ts:Date.now()});
+                              msgnum:qs[qname].cc, ts:Date.now()});
             if(qs[qname].q.length === 1) {
                 callIOS(qname, qs[qname].q[0]); }
             else {  //multiple calls in queue, clear cruft and resume if needed
                 while(Date.now - qs[qname].q[0].ts > qs[qname].maxlag) {
-                    const mqo = qs[qname].q.shift();
-                    jt.log("ios call cleared crufty " + mqo.fname + " " +
-                           jt.ellipsis(JSON.stringify(mqo.pobj), 300)); }
-                callIOS(qname, qs[qname].q[0]); } },
-        return: function (jsonstr) {
-            const res = JSON.parse(jsonstr);
-            if(qs[res.qname].q[0].fname === res.fname) {  //normal return
-                const mqo = qs[res.qname].q.shift();
-                jt.log("iosReturn callback " + res.qname + " "  + res.fname +
-                       " " + jt.ellipsis(jsonstr, 300));
-                mqo.cbf(res.result); }
+                    cruft = qs[qname].q.shift();
+                    jt.log("ios call cleared crufty " + cruft.fname + " " +
+                           jt.ellipsis(JSON.stringify(cruft.pobj), 300)); }
+                if(cruft) {  //restart the queue
+                    callIOS(qname, qs[qname].q[0]); } } },
+        retv: function (mstr) {
+            var result = "";
+            const qname = mstr.slice(0, mstr.indexOf(":"));
+            mstr = mstr.slice(mstr.indexOf(":") + 1);
+            const msgid = mstr.slice(0, mstr.indexOf(":"));
+            mstr = mstr.slice(mstr.indexOf(":") + 1);
+            const fname = mstr.slice(0, mstr.indexOf(":"));
+            mstr = mstr.slice(mstr.indexOf(":") + 1);
+            result = mstr;
+            if(mstr && (mstr.startsWith("{") || mstr.startsWith("["))) {
+                result = JSON.parse(mstr); }
+            const logtxt = (qname + " " + msgid + " " + fname +
+                            jt.ellipsis(mstr, 300));
+            if(!qs[qname].q.length) {
+                jt.log("ios.retv ignoring spurious return: " + logtxt); }
+            else if(qs[qname].q[0].fname === fname) {  //return value for call
+                const mqo = qs[qname].q.shift();
+                jt.log("iosReturn callback: " + logtxt);
+                if(!result.startsWith("Error -")) {
+                    try {
+                        mqo.cbf(result);
+                    } catch(e) {
+                        jt.log("svc.ios.return callback failed: " + e);
+                    } }
+                if(qs[qname].q.length) {  //process next in queue
+                    callIOS(qname, qs[qname].q[0]); } }
             else {  //mismatched return for current queue (previous timeout)
                 jt.log("iosReturn no match current queue entry, ignoring " +
-                       res.qname + " " + res.fname); } }
+                       logtxt); } }
     };  //end mgrs.ios returned functions
     }());
 
@@ -65,20 +150,27 @@ app.svc = (function () {
             musicPath: "fixed",  //can't change where music files are
             dbPath: "fixed",  //rating info is only kept in app files for now
             audsrc: "IOS",
+            appversion: "",
             versioncode: ""};
     return {
         plat: function (key) { return platconf[key]; },
         initialize: function () {  //don't block init of rest of modules
             setTimeout(mgrs.loc.loadInitialData, 50);
             mgrs.ios.call("getVersionCode", null, function (val) {
-                platconf.versioncode = val; }); }
+                platconf.versioncode = val; });
+            mgrs.ios.call("getAppVersion", null, function (val) {
+                platconf.appversion = val; }); }
     };  //end mgrs.gen returned functions
     }());
 
 return {
     init: function () { mgrs.gen.initialize(); },
-    iosReturn: function (jsonstr) { mgrs.ios.return(jsonstr); },
     plat: function (key) { return mgrs.gen.plat(key); },
+    iosReturn: function (jsonstr) { mgrs.ios.retv(jsonstr); },
+    loadDigDat: function (cbf) { mgrs.loc.loadDigDat(cbf); },
+    songs: function () { return mgrs.loc.getDigDat().songs; },
+    fetchSongs: function (cf, ef) { mgrs.loc.fetchSongs(cf, ef); },
+    noteUpdatedState: function (label) { mgrs.loc.noteUpdatedState(label); },
     dispatch: function (mgrname, fname, ...args) {
         try {
             return mgrs[mgrname][fname].apply(app.svc, args);
