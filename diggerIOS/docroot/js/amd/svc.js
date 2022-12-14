@@ -11,6 +11,45 @@ app.svc = (function () {
     mgrs.sg = (function () {
         var dbstatdiv = "topdlgdiv";
         var apresloadcmd = "";
+        function parseAudioSummary (dais) {
+            jt.out(dbstatdiv, "Parsing audio summary...");
+            dais = dais.filter((d) => d.title && d.path);  //title and path req
+            dais.forEach(function (dai) {
+                dai.artist = dai.artist || "Unknown";
+                dai.album = dai.album || "Singles"; });
+            return dais; }
+        function setArtistFromPath (song) {
+            const pes = song.path.split("/");
+            song.ti = pes[pes.length - 1];
+            if(pes.length >= 3) {
+                song.ar = pes[pes.length - 3];
+                song.ab = pes[pes.length - 2]; }
+            else if(pes.length >= 2) {
+                song.ar = pes[pes.length - 2]; } }
+        function mergeAudioData (dais) {
+            dais = parseAudioSummary(dais);
+            jt.out(dbstatdiv, "Merging Digger data...");
+            const dbo = mgrs.loc.getDatabase();
+            Object.values(dbo.songs).forEach(function (s) {  //mark all deleted
+                s.fq = s.fq || "N";
+                if(!s.fq.startsWith("D")) {
+                    s.fq = "D" + s.fq; } });
+            dbo.songcount = dais.length;
+            dais.forEach(function (dai) {
+                var song = dbo.songs[dai.path];
+                if(!song) {
+                    dbo.songs[dai.path] = {};
+                    song = dbo.songs[dai.path]; }
+                song.path = dai.path;
+                song.fq = song.fq || "N";
+                if(song.fq.startsWith("D")) {
+                    song.fq = song.fq.slice(1); }
+                song.ti = dai.title;
+                song.ar = dai.artist;
+                song.ab = dai.album;
+                app.top.dispatch("dbc", "verifySong", song);
+                if(!song.ar) {  //artist required for hub sync
+                    setArtistFromPath(song); } }); }
     return {
         verifyDatabase: function (dbo) {
             var stat = app.top.dispatch("dbc", "verifyDatabase", dbo);
@@ -27,7 +66,8 @@ app.svc = (function () {
         loadLibrary: function (procdivid, apresload) {
             dbstatdiv = procdivid || "topdlgdiv";
             apresloadcmd = apresload || "";
-            jt.log("svc.sg.loadLibrary media read request not implemented."); }
+            mgrs.ios.call("requestMediaRead", null, function (dais) {
+                mergeAudioData(dais); }, "srdr"); }
     };  //end mgrs.sg returned functions
     }());
 
@@ -84,6 +124,7 @@ app.svc = (function () {
     //unintuitive sequencing, deadlock, starvation etc.
     mgrs.ios = (function () {
         const qs = {"main":{q:[], cc:0, maxlag:10 * 1000},
+                    "srdr":{q:[], cc:0, maxlag:25 * 1000},
                     "hubc":{q:[], cc:0, maxlag:30 * 1000}};
         function callIOS (queueName, mqo) {
             var param = mqo.pobj || "";
@@ -121,14 +162,14 @@ app.svc = (function () {
             result = mstr;
             if(mstr && (mstr.startsWith("{") || mstr.startsWith("["))) {
                 result = JSON.parse(mstr); }
-            const logtxt = (qname + " " + msgid + " " + fname +
+            const logtxt = (qname + " " + msgid + " " + fname + " " +
                             jt.ellipsis(mstr, 300));
             if(!qs[qname].q.length) {
                 jt.log("ios.retv ignoring spurious return: " + logtxt); }
             else if(qs[qname].q[0].fname === fname) {  //return value for call
                 const mqo = qs[qname].q.shift();
                 jt.log("iosReturn callback: " + logtxt);
-                if(!result.startsWith("Error -")) {
+                if(!mstr.startsWith("Error -")) {
                     try {
                         mqo.cbf(result);
                     } catch(e) {

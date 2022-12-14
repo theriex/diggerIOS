@@ -1,8 +1,10 @@
 import UIKit
 import WebKit
+import MediaPlayer
 
 class ViewController: UIViewController, WKUIDelegate {
     var webView: WKWebView!
+    var dais = [[String: String]]()  //Digger Audio Items
 
     override func loadView() {
         let wvconf = WKWebViewConfiguration()
@@ -23,6 +25,28 @@ class ViewController: UIViewController, WKUIDelegate {
         webView.loadFileURL(iu, allowingReadAccessTo: du)
         let request = URLRequest(url: iu)
         webView.load(request)
+    }
+
+    func getDiggerAudioItems() -> String {
+        var retval = ""
+        let enc = JSONEncoder()
+        if let jsondat = try? enc.encode(dais) {
+            if let jsonstr = String(data: jsondat, encoding: .utf8) {
+                retval = jsonstr } }
+        return retval
+    }
+
+    func queryMedia() -> String {
+        dais = [[String: String]]()  //reset
+        let mqry = MPMediaQuery.songs()
+        if let items = mqry.items {
+            for item in items {
+                if let url = item.assetURL {
+                    dais.append(["path": url.absoluteString,
+                                 "title": item.title ?? "",
+                                 "artist": item.artist ?? "",
+                                 "album": item.albumTitle ?? ""]) } } }
+        return getDiggerAudioItems()
     }
 }
 
@@ -73,6 +97,10 @@ extension ViewController:WKScriptMessageHandler {
             return readFile("digdat.json")
         case "writeDigDat":
             return writeFile("digdat.json", param)
+        case "requestMediaRead":
+            return queryMedia()
+        case "requestAudioSummary":
+            return getDiggerAudioItems()
         default:
             let err = "Error - handleDiggerCall unknown fname: \(fname)"
             print(err)
@@ -118,5 +146,4 @@ extension ViewController:WKScriptMessageHandler {
             return "Error - writeFile data.write failed"
         }
     }
-
 }
