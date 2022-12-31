@@ -7,6 +7,45 @@ app.svc = (function () {
 
     var mgrs = {};  //general container for managers
 
+
+    //Media Playback manager handles transport and playback calls
+    mgrs.mp = (function () {
+        function deckPaths () {
+            var qm = app.deck.stableDeckLength(); var paths;
+            qm = app.player.dispatch("slp", "limitToSleepQueueMax", qm);
+            const dst = app.deck.getState(qm);  //songs currently on deck
+            if(dst.disp === "album") {
+                paths = dst.disp.info.songs.map((s) => s.path); }
+            else {  //send currently playing song as first path in list
+                paths = dst.det.map((s) => s.path);
+                paths.unshift(app.player.song().path); }
+            return JSON.stringify(paths); }
+        function notePlaybackState (stat) {
+            app.player.dispatch("mob", "notePlaybackStatus", stat); }
+    return {
+        requestStatusUpdate: function (/*contf*/) {
+            mgrs.ios.call("statusSync", deckPaths(), notePlaybackState); },
+        pause: function () {
+            mgrs.ios.call("pausePlayback", "", notePlaybackState); },
+        resume: function () {
+            mgrs.ios.call("resumePlayback", "", notePlaybackState); },
+        seek: function (ms) {
+            mgrs.ios.call("seekToOffset", String(ms), notePlaybackState); },
+        playSong: function (path) {
+            mgrs.ios.call("startPlayback", deckPaths(), notePlaybackState); }
+    };  //end mgrs.mp returned functions
+    }());
+
+
+    //Copy export manager handles playlist creation.  No file copying.
+    mgrs.cpx = (function () {
+    return {
+        exportSongs: function (/*dat, statusfunc, contfunc, errfunc*/) {
+            jt.log("svc.cpx.exportSongs not supported."); }
+    };  //end mgrs.cpx returned functions
+    }());
+
+
     //song database processing
     mgrs.sg = (function () {
         var dbstatdiv = "topdlgdiv";
@@ -29,12 +68,13 @@ app.svc = (function () {
         function mergeAudioData (dais) {
             dais = parseAudioSummary(dais);
             jt.out(dbstatdiv, "Merging Digger data...");
-            const dbo = mgrs.loc.getDatabase();
+            const dbo = mgrs.loc.getDigDat();
             Object.values(dbo.songs).forEach(function (s) {  //mark all deleted
                 s.fq = s.fq || "N";
                 if(!s.fq.startsWith("D")) {
                     s.fq = "D" + s.fq; } });
             dbo.songcount = dais.length;
+            jt.out("countspan", String(dbo.songcount) + "&nbsp;songs");
             dais.forEach(function (dai) {
                 var song = dbo.songs[dai.path];
                 if(!song) {
@@ -67,7 +107,14 @@ app.svc = (function () {
             dbstatdiv = procdivid || "topdlgdiv";
             apresloadcmd = apresload || "";
             mgrs.ios.call("requestMediaRead", null, function (dais) {
-                mergeAudioData(dais); }, "srdr"); }
+                mergeAudioData(dais);
+                mgrs.loc.writeDigDat(function () {
+                    jt.out(dbstatdiv, "");
+                    app.top.markIgnoreSongs();
+                    app.top.rebuildKeywords();
+                    app.deck.update("rebuildSongData");
+                    if(apresloadcmd === "rebuild") {
+                        app.player.next(); } }); }, "srdr"); }
     };  //end mgrs.sg returned functions
     }());
 
@@ -76,24 +123,14 @@ app.svc = (function () {
     mgrs.loc = (function () {
         var config = null;
         var dbo = null;
-        function failsafeJSONParse (jstr, dflt, fname) {
-            var val = null;
-            jstr = jstr || dflt;
-            fname = fname || "";
-            try {
-                val = JSON.parse(jstr);
-            } catch(e) {
-                jt.err(fname + " JSON read failed: " + e);
-            }
-            return val; }
     return {
         getConfig: function () { return config; },
         getDigDat: function () { return dbo; },
         loadInitialData: function () {
-            mgrs.ios.call("readConfig", null, function (cj) {
-                config = failsafeJSONParse(cj, "{}", "readConfig");
-                mgrs.ios.call("readDigDat", null, function (dj) {
-                    dbo = failsafeJSONParse(dj, "{}", "readDigDat");
+            mgrs.ios.call("readConfig", null, function (cobj) {
+                config = cobj || {};
+                mgrs.ios.call("readDigDat", null, function (dobj) {
+                    dbo = dobj || {};
                     config = config || {};  //default account set up in top.js
                     dbo = mgrs.sg.verifyDatabase(dbo);
                     //let rest of app know data is ready, then check library:
@@ -105,16 +142,32 @@ app.svc = (function () {
                     if(!dbo.scanned) {
                         setTimeout(mgrs.sg.loadLibrary, 50); } }); }); },
         loadDigDat: function (cbf) {
-            mgrs.ios.call("readDigDat", null, function (dj) {
-                dbo = failsafeJSONParse(dj, "{}", "readDigDat");
+            mgrs.ios.call("readDigDat", null, function (dobj) {
+                dbo = dobj || {};
                 dbo = mgrs.sg.verifyDatabase(dbo);
                 cbf(dbo); }); },
+        writeDigDat: function (cbf) {
+            var stat = app.top.dispatch("dbc", "verifyDatabase", dbo);
+            if(!stat.verified) {
+                return jt.err("writeDigDat got bad data not writing: " +
+                              JSON.stringify(stat)); }
+            const datstr = JSON.stringify(dbo, null, 2);
+            mgrs.ios.call("writeDigDat", datstr, cbf); },
+        updateSong: function (song, contf/*, errf*/) {
+            app.copyUpdatedSongData(song, dbo.songs[song.path]);
+            mgrs.loc.writeDigDat(function () {
+                jt.out("modindspan", "");  //turn off indicator light
+                app.top.dispatch("srs", "syncToHub");  //sched sync
+                if(contf) {
+                    contf(dbo.songs[song.path]); } }); },
         noteUpdatedState: function (/*label*/) {
             //If label === "deck" and the IOS platform needs to keep info
             //outside the app UI, this is the place to update that data
             return; },
         fetchSongs: function (contf/*, errf*/) {  //call stack as if web call
-            setTimeout(function () { contf(dbo.songs); }, 50); }
+            setTimeout(function () { contf(dbo.songs); }, 50); },
+        fetchAlbum: function (/*contf, errf*/) {
+            throw("Can't infer song order from opaque path so this will need another query..."); }
     };  //end mgrs.loc returned functions
     }());
 
@@ -127,13 +180,31 @@ app.svc = (function () {
                     "srdr":{q:[], cc:0, maxlag:25 * 1000},
                     "hubc":{q:[], cc:0, maxlag:30 * 1000}};
         function callIOS (queueName, mqo) {
+            var logmsg;
             var param = mqo.pobj || "";
             if(param && typeof param === "object") {  //object or array
                 param = JSON.stringify(param); }
             const msg = (queueName + ":" + mqo.msgnum + ":" + mqo.fname + ":" +
                          param);
-            jt.log("callIOS: " + msg);
+            logmsg = msg;
+            if(logmsg.length > 250) {
+                logmsg = msg.slice(0, 150) + "..." + msg.slice(-50); }
+            jt.log("callIOS: " + logmsg);
             window.webkit.messageHandlers.diggerMsgHandler.postMessage(msg); }
+        function analyzeJSON (txt) {
+            if(txt.startsWith("[") && txt.endsWith("]")) {
+                jt.log("txt is '['...']'");
+                txt = txt.slice(1, -1);
+                const items = txt.split("},{");
+                jt.log("},{ split yields " + items.length + " items");
+                items.forEach(function (item, idx) {
+                    if(!item.startsWith("{")) { item = "{" + item; }
+                    if(!item.endsWith("}")) { item = item + "}"; }
+                    try {
+                        JSON.parse(item);
+                    } catch(e) {
+                        jt.log("item[" + idx + "] " + e);
+                        jt.log(item); } }); } }
     return {
         call: function (iosFuncName, paramObj, callback, qname) {
             var cruft = null;
@@ -152,7 +223,10 @@ app.svc = (function () {
                 if(cruft) {  //restart the queue
                     callIOS(qname, qs[qname].q[0]); } } },
         retv: function (mstr) {
-            var result = "";
+            var result = ""; var logmsg = mstr;
+            if(logmsg.length > 250) {
+                logmsg = mstr.slice(0, 150) + "..." + mstr.slice(-50); }
+            jt.log("ios.retv: " + logmsg);
             const qname = mstr.slice(0, mstr.indexOf(":"));
             mstr = mstr.slice(mstr.indexOf(":") + 1);
             const msgid = mstr.slice(0, mstr.indexOf(":"));
@@ -161,14 +235,21 @@ app.svc = (function () {
             mstr = mstr.slice(mstr.indexOf(":") + 1);
             result = mstr;
             if(mstr && (mstr.startsWith("{") || mstr.startsWith("["))) {
-                result = JSON.parse(mstr); }
+                try {
+                    result = JSON.parse(mstr);
+                } catch(e) {
+                    analyzeJSON(mstr);
+                    jt.log("svc.ios.retv err " + e + " JSON text: " +
+                           jt.ellipsis(mstr, 300) + " ... " +
+                           mstr.slice(-300));
+                    mstr = "Error - JSON parse failed " + e;
+                } }
             const logtxt = (qname + " " + msgid + " " + fname + " " +
                             jt.ellipsis(mstr, 300));
             if(!qs[qname].q.length) {
-                jt.log("ios.retv ignoring spurious return: " + logtxt); }
+                jt.log("ios.retv ignoring spurious return."); }
             else if(qs[qname].q[0].fname === fname) {  //return value for call
                 const mqo = qs[qname].q.shift();
-                jt.log("iosReturn callback: " + logtxt);
                 if(!mstr.startsWith("Error -")) {
                     try {
                         mqo.cbf(result);
@@ -178,8 +259,7 @@ app.svc = (function () {
                 if(qs[qname].q.length) {  //process next in queue
                     callIOS(qname, qs[qname].q[0]); } }
             else {  //mismatched return for current queue (previous timeout)
-                jt.log("iosReturn no match current queue entry, ignoring " +
-                       logtxt); } }
+                jt.log("iosReturn no match current queue entry, ignoring."); } }
     };  //end mgrs.ios returned functions
     }());
 
@@ -211,6 +291,8 @@ return {
     loadDigDat: function (cbf) { mgrs.loc.loadDigDat(cbf); },
     songs: function () { return mgrs.loc.getDigDat().songs; },
     fetchSongs: function (cf, ef) { mgrs.loc.fetchSongs(cf, ef); },
+    fetchAlbum: function (cf, ef) { mgrs.loc.fetchAlbum(cf, ef); },
+    updateSong: function (song, cf, ef) { mgrs.loc.updateSong(song, cf, ef); },
     noteUpdatedState: function (label) { mgrs.loc.noteUpdatedState(label); },
     dispatch: function (mgrname, fname, ...args) {
         try {

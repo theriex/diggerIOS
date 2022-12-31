@@ -4,7 +4,27 @@ import MediaPlayer
 
 class ViewController: UIViewController, WKUIDelegate {
     var webView: WKWebView!
+    let smpc = MPMusicPlayerController.systemMusicPlayer
+    var perr = ""
+    var qsta:[MPMediaItem]? = nil  //current queue state reference
+    var mibp = [String: MPMediaItem]()  //Media items by path
     var dais = [[String: String]]()  //Digger Audio Items
+
+    func conlog(_ txt:String) {
+        let fmat = DateFormatter()
+        fmat.dateStyle = .medium
+        fmat.timeStyle = .medium
+        let date = Date()
+        let tstmp = fmat.string(from: date)
+        print("\(tstmp) \(txt)")
+    }
+
+    func shortstr(_ txt:String) -> String {
+        var st = txt
+        if(txt.count > 250) {
+            st = txt.prefix(180) + "..." + txt.suffix(50) }
+        return st
+    }
 
     override func loadView() {
         let wvconf = WKWebViewConfiguration()
@@ -27,26 +47,31 @@ class ViewController: UIViewController, WKUIDelegate {
         webView.load(request)
     }
 
-    func getDiggerAudioItems() -> String {
-        var retval = ""
-        let enc = JSONEncoder()
-        if let jsondat = try? enc.encode(dais) {
-            if let jsonstr = String(data: jsondat, encoding: .utf8) {
-                retval = jsonstr } }
-        return retval
-    }
-
-    func queryMedia() -> String {
+    func initMediaInfo() {
+        mibp = [String: MPMediaItem]()  //reset
         dais = [[String: String]]()  //reset
+        let datezero = Date(timeIntervalSince1970: 0)
         let mqry = MPMediaQuery.songs()
         if let items = mqry.items {
             for item in items {
-                if let url = item.assetURL {
+                if let url = item.assetURL {  //must have a url to play it
+                    mibp[url.absoluteString] = item
+                    let lpd = item.lastPlayedDate ?? datezero
                     dais.append(["path": url.absoluteString,
                                  "title": item.title ?? "",
                                  "artist": item.artist ?? "",
-                                 "album": item.albumTitle ?? ""]) } } }
-        return getDiggerAudioItems()
+                                 "album": item.albumTitle ?? "",
+                                 "lp": lpd.ISO8601Format() ]) } } }
+    }
+
+    func toJSONString<T>(_ value: T) -> String where T: Encodable {
+        var retval = ""
+        let enc = JSONEncoder()
+        enc.outputFormatting = .withoutEscapingSlashes
+        if let jsondat = try? enc.encode(value) {
+            if let jsonstr = String(data: jsondat, encoding: .utf8) {
+                retval = jsonstr } }
+        return retval
     }
 }
 
@@ -61,25 +86,27 @@ extension ViewController:WKScriptMessageHandler {
         var mstr = msg.body as! String
         var idx = mstr.firstIndex(of:":")!
         let qname = String(mstr.prefix(upTo: idx))
-        //print("qname: ", qname)
+        //conlog("userContentController qname: \(qname)")
         idx = mstr.index(after: idx)  //idx += 1
         mstr.removeSubrange(mstr.startIndex..<idx)  //mutate mstr
         idx = mstr.firstIndex(of:":")!
         let msgid = String(mstr.prefix(upTo: idx))
-        //print("msgid: ", msgid)
+        //conlog("userContentController msgid: \(msgid)")
         idx = mstr.index(after: idx)  //idx += 1
         mstr.removeSubrange(mstr.startIndex..<idx)  //mutate mstr
         idx = mstr.firstIndex(of:":")!
         let fname = String(mstr.prefix(upTo: idx))
-        //print("fname: ", fname)
+        //conlog("userContentController fname: \(fname)")
         idx = mstr.index(after: idx)  //idx += 1
         mstr.removeSubrange(mstr.startIndex..<idx)  //mutate mstr
-        //print("param: ", mstr)
+        //conlog("userContentController param: \(mstr)")
         let resjson = handleDiggerCall(fname, mstr)
         let basic = "\(qname):\(msgid):\(fname):\(resjson)"
         let retval = basic.replacingOccurrences(of:"'", with:"\\'")
-        print("retval: ", retval)
-        self.webView.evaluateJavaScript("app.svc.iosReturn('\(retval)')")
+        conlog("retval: \(shortstr(retval))")
+        let cbstr = "app.svc.iosReturn('\(retval)')"
+        writeFile("lastScript.js", cbstr)
+        self.webView.evaluateJavaScript(cbstr)
     }
 
 
@@ -90,20 +117,38 @@ extension ViewController:WKScriptMessageHandler {
         case "getAppVersion":  //v + CFBundleVersion
             return "v1.0.?"
         case "readConfig":
-            return readFile("config.xml")
+            return readFile("config.json")
         case "writeConfig":
-            return writeFile("config.xml", param)
+            return writeFile("config.json", param)
         case "readDigDat":
+            initMediaInfo()
             return readFile("digdat.json")
         case "writeDigDat":
             return writeFile("digdat.json", param)
         case "requestMediaRead":
-            return queryMedia()
+            return xmitEscape(toJSONString(self.dais));
         case "requestAudioSummary":
-            return getDiggerAudioItems()
+            return xmitEscape(toJSONString(self.dais));
+        case "statusSync":
+            synchronizePlaybackQueue(param)
+            return getPlaybackStatus()
+        case "pausePlayback":
+            self.smpc.pause()   //MPMediaPlayback protocol
+            return getPlaybackStatus()
+        case "resumePlayback":
+            self.smpc.play()
+            return getPlaybackStatus()
+        case "seekToOffset":
+            self.smpc.currentPlaybackTime = timeIntervalFromMStr(param)
+            return getPlaybackStatus()
+        case "startPlayback":
+            resetQueueAndPlay(pathsToMIA(param), "Starting playback")
+            if(perr != "") {
+                return perr }
+            return "prepared"
         default:
             let err = "Error - handleDiggerCall unknown fname: \(fname)"
-            print(err)
+            conlog(err)
             return err }
     }
 
@@ -120,6 +165,18 @@ extension ViewController:WKScriptMessageHandler {
     }
 
 
+    func xmitEscape(_ json:String) -> String {
+        var ej = json
+        ej = ej.replacingOccurrences(of:"\n", with:" ")
+        ej = ej.replacingOccurrences(of:"  ", with:" ")
+        ej = ej.replacingOccurrences(of:"  ", with:" ")
+        ej = ej.replacingOccurrences(of:"  ", with:" ")
+        ej = ej.replacingOccurrences(of:"\\", with:"\\\\")
+        ej = ej.replacingOccurrences(of:"\"", with:"\\\"")
+        return ej
+    }
+
+
     func readFile(_ fname:String) -> String {
         let furl = docDirFileURL(fname)
         do {
@@ -128,7 +185,7 @@ extension ViewController:WKScriptMessageHandler {
                 return "" }
             let dc = try Data(contentsOf: furl)
             let rv = String(data: dc, encoding: .utf8)
-            return rv!
+            return xmitEscape(rv!)
         } catch {
             return "Error - readFile failed"
         }
@@ -141,9 +198,191 @@ extension ViewController:WKScriptMessageHandler {
             return "Error - writeFile data conversion failed" }
         do {
             try data.write(to: furl)
-            return content
+            return xmitEscape(content)
         } catch {
             return "Error - writeFile data.write failed"
         }
+    }
+
+
+    func timeIntervalToMS(_ ti:TimeInterval) -> Int {
+        return Int(round(ti * 1000))
+    }
+
+
+    func timeIntervalFromMStr(_ mstr:String) -> TimeInterval {
+        var ims = Int(mstr) ?? -1
+        if(ims < 0) {
+            conlog("Could not convert ms string to Int: \(mstr)")
+            ims = 0 }
+        return TimeInterval(ims / 1000)
+    }
+
+
+    func pathsToMIA(_ paths:String) -> [MPMediaItem] {
+        var mia = [MPMediaItem]()
+        if let data = paths.data(using: .utf8) {
+            do {
+                if let psa = try JSONSerialization.jsonObject(
+                     with: data,
+                     options: .mutableContainers) as? [String] {
+                    mia = psa.map({ mibp[$0]! }) }
+            } catch {
+                conlog("pathsToMIA failed: \(error)")
+            } }
+        return mia
+    }
+
+
+    func miaToMIQD(_ mia:[MPMediaItem]) -> MPMusicPlayerQueueDescriptor {
+        let mic = MPMediaItemCollection(items:mia)
+        let miqd = MPMusicPlayerMediaItemQueueDescriptor(itemCollection:mic)
+        return miqd as MPMusicPlayerQueueDescriptor
+    }
+
+
+    func getPlaybackStatus() -> String {
+        var pbstat = "paused"  //By default, show a play button.
+        if(self.smpc.playbackState == MPMusicPlaybackState.playing) {
+            pbstat = "playing" }
+        let pbpos = timeIntervalToMS(self.smpc.currentPlaybackTime)
+        var itemDuration = 0
+        var itemPath = ""
+        if let npi = self.smpc.nowPlayingItem {
+            itemDuration = timeIntervalToMS(npi.playbackDuration)
+            if let url = npi.assetURL {
+                itemPath = url.absoluteString } }
+        let statstr = toJSONString(["state": pbstat,
+                                    "pos": String(pbpos),
+                                    "dur": String(itemDuration),
+                                    "path": itemPath])
+        return statstr
+    }
+
+
+    func getDiggerQueueState() -> [MPMediaItem]? {
+        if(qsta == nil) {
+            let qtxt = readFile("digqstat.json")
+            if(!qtxt.hasPrefix("Error ")) {
+                qsta = pathsToMIA(qtxt) }
+            if(qsta == nil) {
+                conlog("digqstat.json retrieval failed.") } }
+        return qsta
+    }
+
+
+    func saveDiggerQueueState(_ updq:[MPMediaItem]) {
+        qsta = updq
+        let res = writeFile("digqstat.json",
+                            toJSONString(updq.map({ $0.assetURL })))
+        let content = shortstr(res)
+        conlog("saveDiggerQueueState \(qsta!.count) items: \(content)")
+    }
+
+
+    //Assuming the queue has been set, prepare for playback
+    func prepPlayback(_ caller:String) {
+        self.smpc.prepareToPlay(
+          completionHandler: { (err) in
+              if let errobj = err {
+                  self.conlog("\(caller) prepareToPlay error: \(errobj)")
+                  self.smpc.play() }  //Prepares the queue if needed.
+              else {
+                  self.conlog("\(caller) prepareToPlay success")
+                  if(self.smpc.playbackState != MPMusicPlaybackState.playing) {
+                      self.smpc.play() } } })
+    }
+
+
+    //Prefer to have playback transition without interrupting the currently
+    //playing song, but most important to actually start playing the queue.
+    func resetQueueAndPlay(_ updq:[MPMediaItem], _ reason:String) {
+        conlog("resetQueueAndPlay: \(reason)")
+        perr = ""
+        if(updq.count == 0) {
+            perr = "Error - Empty queue given, resetQueueAndPlay ignored"
+            return }
+        saveDiggerQueueState(updq)
+        self.smpc.stop()  //MPMediaPlayback.  Clears the queue.
+        self.smpc.nowPlayingItem = nil  //clear state
+        self.smpc.setQueue(with: miaToMIQD(updq))  //MPMusicPlayerController
+        prepPlayback("resetQueueAndPlay")
+    }
+
+
+    //It's remotely possible the paths could change while the app is
+    //running, but that would mess up finding an updated song on return from
+    //hubsync so just as well to use the path as the comparison here.  Only
+    //allowed to play locally available files.
+    func sameSong(_ mif:MPMediaItem?, _ mib:MPMediaItem?) -> Bool {
+        if((mif == nil) || (mib == nil)) {
+            return false }
+        if(mif!.assetURL == mib!.assetURL) {
+            return true }
+        return false
+    }
+
+
+    //provided qstat and updq are both available, check no changes and
+    //append any additional songs given.
+    func syncQueueWithUpdates(_ qstat:[MPMediaItem], _ updq:[MPMediaItem],
+                              _ nowpi:MPMediaItem, _ npidx:Int) {
+        if let upidx = updq.firstIndex(where: {sameSong($0, nowpi)}) {
+            var offset = 0
+            while(((npidx + offset) < qstat.count) &&
+                  ((upidx + offset) < updq.count)) {
+                if(!sameSong(qstat[npidx + offset], updq[upidx + offset])) {
+                    conlog("syncQueueWithUpdates differs at offset \(offset)")
+                    conlog("   qstat: \(qstat[npidx + offset].assetURL!)")
+                    conlog("    updq: \(updq[upidx + offset].assetURL!)")
+                    resetQueueAndPlay(updq, "Update queue content differs")
+                    return }
+                offset += 1 }
+            if((npidx + offset) < qstat.count) {
+                //update queue was shorter, probably additional filtering
+                resetQueueAndPlay(updq, "Update queue has fewer items") }
+            else if((upidx + offset) >= updq.count) { //queues were same length
+                conlog("playback queue up to date, \(qstat.count) items") }
+            else {  //queues match, append additional update items
+                conlog("appending additional songs to playback queue")
+                var newsongs = [MPMediaItem]()
+                while((upidx + offset) < updq.count) {
+                    newsongs.append(updq[upidx + offset]) }
+                self.smpc.append(miaToMIQD(newsongs))
+                //self.smpc.prepareToPlay()
+                let merged = qstat + newsongs
+                saveDiggerQueueState(merged) } }
+        else {
+            resetQueueAndPlay(updq, "Now playing song not in updated queue") }
+    }
+
+
+    func synchronizePlaybackQueue(_ paths:String) {
+        let updq = pathsToMIA(paths)
+        if let qstat = getDiggerQueueState() { //loads from disk if needed
+            if(qstat.isEmpty) {
+                resetQueueAndPlay(updq, "Replacing empty digger queue state")
+                return }
+            if(!self.smpc.isPreparedToPlay) {
+                prepPlayback("synchronizePlaybackQueue")
+                return }
+            if let nowpi = self.smpc.nowPlayingItem {
+                let npidx = self.smpc.indexOfNowPlayingItem
+                if(npidx == NSNotFound) {
+                    resetQueueAndPlay(updq, "No index for now playing")
+                    return }
+                if(npidx < 0 || qstat.count <= npidx) {
+                    resetQueueAndPlay(updq, "npidx out of range")
+                    return }
+                if(!sameSong(nowpi, qstat[npidx])) {
+                    //current queue is out of sync with app state queue
+                    resetQueueAndPlay(updq, "Queue state inconsistent")
+                    return }
+                syncQueueWithUpdates(qstat, updq, nowpi, npidx) }
+            else {  //no item to sync queues from if nowpi is nil
+                resetQueueAndPlay(updq, "No currently playing item")
+                return } }
+        else {
+            resetQueueAndPlay(updq, "No digger queue state available") }
     }
 }
