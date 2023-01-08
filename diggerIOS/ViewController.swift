@@ -64,6 +64,28 @@ class ViewController: UIViewController, WKUIDelegate {
                                  "lp": lpd.ISO8601Format() ]) } } }
     }
 
+    func getAlbumSongs(_ nps:String) -> String {
+        var rets = ""
+        if let data = nps.data(using: .utf8) {
+            do {
+                if let sj = try JSONSerialization.jsonObject(
+                     with: data,
+                     options: .mutableContainers) as? [String:String] {
+                    let artist = sj["ar"]
+                    let title = sj["ti"]
+                    var mis = [MPMediaItem]()
+                    for (_, mi) in mibp {
+                        if(mi.artist == artist && mi.albumTitle == title) {
+                            mis.append(mi) } }
+                    mis.sort(by: {$0.albumTrackNumber < $1.albumTrackNumber})
+                    let paths = mis.map({$0.assetURL!.absoluteString})
+                    rets = toJSONString(paths) }
+            } catch {
+                conlog("getAlbumSongs failed: \(error)")
+            } }
+        return rets
+    }
+
     func toJSONString<T>(_ value: T) -> String where T: Encodable {
         var retval = ""
         let enc = JSONEncoder()
@@ -100,7 +122,16 @@ extension ViewController:WKScriptMessageHandler {
         idx = mstr.index(after: idx)  //idx += 1
         mstr.removeSubrange(mstr.startIndex..<idx)  //mutate mstr
         //conlog("userContentController param: \(mstr)")
-        let resjson = handleDiggerCall(fname, mstr)
+        if(fname.starts(with:"hub")) {
+            handleHubCall(qname, msgid, fname, mstr) }
+        else {
+            let resjson = handleDiggerCall(fname, mstr)
+            webviewResult(qname, msgid, fname, resjson) }
+    }
+
+
+    func webviewResult(_ qname:String, _ msgid:String, _ fname:String,
+                       _ resjson:String) {
         let basic = "\(qname):\(msgid):\(fname):\(resjson)"
         let retval = basic.replacingOccurrences(of:"'", with:"\\'")
         conlog("retval: \(shortstr(retval))")
@@ -117,12 +148,12 @@ extension ViewController:WKScriptMessageHandler {
         case "getAppVersion":  //v + CFBundleVersion
             return "v1.0.?"
         case "readConfig":
-            return readFile("config.json")
+            return readFile(docDirFileURL("config.json"))
         case "writeConfig":
             return writeFile("config.json", param)
         case "readDigDat":
             initMediaInfo()
-            return readFile("digdat.json")
+            return readFile(docDirFileURL("digdat.json"))
         case "writeDigDat":
             return writeFile("digdat.json", param)
         case "requestMediaRead":
@@ -146,6 +177,13 @@ extension ViewController:WKScriptMessageHandler {
             if(perr != "") {
                 return perr }
             return "prepared"
+        case "fetchAlbum":
+            return getAlbumSongs(param)
+        case "copyToClipboard":
+            UIPasteboard.general.string = param
+            return ""
+        case "docContent":
+            return readAppDocContent(param)
         default:
             let err = "Error - handleDiggerCall unknown fname: \(fname)"
             conlog(err)
@@ -177,8 +215,23 @@ extension ViewController:WKScriptMessageHandler {
     }
 
 
-    func readFile(_ fname:String) -> String {
-        let furl = docDirFileURL(fname)
+    //param is a simple doc file url e.g. "docs/privacy.html"
+    func readAppDocContent(_ param:String) -> String {
+        var ret = "Error - File not found: \(param)"
+        let pfs = param.split(separator: "/")
+        let subdir = String(pfs[0])
+        let fcs = pfs[1].split(separator: ".")
+        let fnm = String(fcs[0])
+        let ext = String(fcs[1])
+        if let url = Bundle.main.url(forResource: fnm, withExtension: ext,
+                                     subdirectory: subdir) {
+            if FileManager.default.fileExists(atPath: url.path) {
+                ret = readFile(url) } }
+        return ret
+    }
+
+
+    func readFile(_ furl:URL) -> String {
         do {
             let fileManager = FileManager.default
             if(!fileManager.fileExists(atPath: furl.path)) {
@@ -262,7 +315,7 @@ extension ViewController:WKScriptMessageHandler {
 
     func getDiggerQueueState() -> [MPMediaItem]? {
         if(qsta == nil) {
-            let qtxt = readFile("digqstat.json")
+            let qtxt = readFile(docDirFileURL("digqstat.json"))
             if(!qtxt.hasPrefix("Error ")) {
                 qsta = pathsToMIA(qtxt) }
             if(qsta == nil) {
@@ -384,5 +437,58 @@ extension ViewController:WKScriptMessageHandler {
                 return } }
         else {
             resetQueueAndPlay(updq, "No digger queue state available") }
+    }
+
+
+    //hub calls are differentiated by endpoint and protocol. The fname is
+    //just referenced for return processing.
+    func handleHubCall(_ qname:String, _ msgid:String, _ fname:String,
+                       _ param:String) {
+        var endpoint = ""
+        var method = ""
+        var data = ""
+        if let pd = param.data(using: .utf8) {
+            do {
+                if let pobj = try JSONSerialization.jsonObject(
+                     with: pd,
+                     options: .mutableContainers) as? [String:String] {
+                    endpoint = pobj["endpoint"]!
+                    method = pobj["method"]!
+                    data = pobj["data"]! }
+            } catch {
+                conlog("handleHubCall JSON unpack failed: \(error)")
+            } }
+        if(endpoint == "") {
+            webviewResult(qname, msgid, fname,
+                          "Error - no endpoint specified")
+            return }
+        let scfg = URLSessionConfiguration.default
+        scfg.timeoutIntervalForRequest = 6
+        scfg.timeoutIntervalForResource = 20
+        let session = URLSession(configuration: scfg)
+        let requrl = URL(string: "https://diggerhub.com/api" + endpoint)
+        var req = URLRequest(url: requrl!)
+        req.httpMethod = method
+        req.setValue("application/x-www-form-urlencoded",
+                     forHTTPHeaderField: "Content-Type")
+        req.httpBody = data.data(using: .utf8)
+        let task = session.dataTask(
+          with: req as URLRequest,
+          completionHandler: { (result, response, error) in
+              if(error != nil) {
+                  self.webviewResult(qname, msgid, fname,
+                                     "Error - Call error: \(error!)")
+                  return }
+              guard let hursp = response as? HTTPURLResponse else {
+                  self.webviewResult(qname, msgid, fname,
+                                     "Error - Non http response")
+                  return }
+              if(hursp.statusCode < 200 || hursp.statusCode >= 300) {
+                  self.webviewResult(qname, msgid, fname,
+                                     "Error - code: \(hursp.statusCode)")
+                  return }
+              let rstr = String(bytes: result!, encoding: .utf8)
+              self.webviewResult(qname, msgid, fname, rstr!) })
+        task.resume()
     }
 }
