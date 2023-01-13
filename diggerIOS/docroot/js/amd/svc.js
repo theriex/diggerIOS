@@ -247,13 +247,67 @@ app.svc = (function () {
                     } catch(e) {
                         jt.log("item[" + idx + "] " + e);
                         jt.log(item); } }); } }
+        function unhandledError (code, errtxt) {
+            jt.log("Default error handler code: " + code +
+                   ", errtxt: " + errtxt); }
+        function logMessageText (mstr) {
+            var logmsg = mstr;
+            if(logmsg.length > 250) {
+                logmsg = mstr.slice(0, 150) + "..." + mstr.slice(-50); }
+            jt.log("ios.retv: " + logmsg); }
+        function parseMessageText(mstr) {
+            var res = "";
+            logMessageText(mstr);
+            const [qname, msgid, fname, ...msgtxt] = mstr.split(":");
+            res = msgtxt.join(":");
+            if(res && (res.startsWith("{") || res.startsWith("["))) {
+                try {
+                    res = JSON.parse(res);
+                } catch(e) {
+                    analyzeJSON(res);
+                    jt.log("svc.ios.retv err " + e + " JSON text: " +
+                           jt.ellipsis(mstr, 300) + " ... " +
+                           mstr.slice(-300));
+                    res = "Error - JSON parse failed " + e;
+                } }
+            return {"qname":qname, "msgid":msgid, "fname":fname, "res":res}; }
+        function parseErrorText (rmo) {
+            var errmsg = rmo.res;
+            const emprefix = "Error - ";
+            errmsg = errmsg.slice(emprefix.length);
+            const codeprefix = "code: ";
+            if(errmsg.indexOf(codeprefix) >= 0) {
+                errmsg = errmsg.slice(codeprefix.length);
+                rmo.errcode = parseInt(errmsg, 10) || 0;
+                if(errmsg.indexOf(" ") >= 0) {
+                    errmsg = errmsg.slice(errmsg.indexOf(" ")); } }
+            else {
+                rmo.errcode = 0; }
+            rmo.errmsg = errmsg; }
+        function verifyQueueMatch(rmo) {
+            if(!qs[rmo.qname].q.length) {
+                jt.log("ios.retv no pending mssages in queue " + rmo.qname +
+                       ". Ignoring.");
+                return false; }
+            if(qs[rmo.qname].q[0].fname !== rmo.fname) {
+                jt.log("ios.retv queue " + rmo.qname + " expected fname " +
+                       qs[rmo.qname].q[0].fname + " but received " +
+                       rmo.fname + ". Ignoring.");
+                return false; }
+            if(qs[rmo.qname].cc !== parseInt(rmo.msgid, 10)) {
+                jt.log("ios.retv queue " + rmo.qname + " fname " + rmo.fname +
+                       " is at cc " + qs[rmo.qname].cc + " but received " +
+                       rmo.msgid + ". Continuing despite sequence error.");
+                return true; }
+            return true; }
     return {
-        call: function (iosFuncName, paramObj, callback) {
+        call: function (iosFuncName, paramObj, callback, errorf) {
             var cruft = null;
             const qname = qnameForFunc(iosFuncName);
             paramObj = paramObj || "";
             qs[qname].cc += 1;
             qs[qname].q.push({fname:iosFuncName, pobj:paramObj, cbf:callback,
+                              errf:errorf || unhandledError,
                               msgnum:qs[qname].cc, ts:Date.now()});
             if(qs[qname].q.length === 1) {
                 callIOS(qname, qs[qname].q[0]); }
@@ -265,41 +319,23 @@ app.svc = (function () {
                 if(cruft) {  //restart the queue
                     callIOS(qname, qs[qname].q[0]); } } },
         retv: function (mstr) {
-            var result = ""; var logmsg = mstr;
-            if(logmsg.length > 250) {
-                logmsg = mstr.slice(0, 150) + "..." + mstr.slice(-50); }
-            jt.log("ios.retv: " + logmsg);
-            const qname = mstr.slice(0, mstr.indexOf(":"));
-            mstr = mstr.slice(mstr.indexOf(":") + 1);
-            //const msgid = mstr.slice(0, mstr.indexOf(":"));
-            mstr = mstr.slice(mstr.indexOf(":") + 1);
-            const fname = mstr.slice(0, mstr.indexOf(":"));
-            mstr = mstr.slice(mstr.indexOf(":") + 1);
-            result = mstr;
-            if(mstr && (mstr.startsWith("{") || mstr.startsWith("["))) {
-                try {
-                    result = JSON.parse(mstr);
-                } catch(e) {
-                    analyzeJSON(mstr);
-                    jt.log("svc.ios.retv err " + e + " JSON text: " +
-                           jt.ellipsis(mstr, 300) + " ... " +
-                           mstr.slice(-300));
-                    mstr = "Error - JSON parse failed " + e;
-                } }
-            if(!qs[qname].q.length) {
-                jt.log("ios.retv ignoring spurious return."); }
-            else if(qs[qname].q[0].fname === fname) {  //return value for call
-                const mqo = qs[qname].q.shift();
-                if(!mstr.startsWith("Error -")) {
-                    try {
-                        mqo.cbf(result);
-                    } catch(e) {
-                        jt.log("svc.ios.return callback failed: " + e);
-                    } }
-                if(qs[qname].q.length) {  //process next in queue
-                    callIOS(qname, qs[qname].q[0]); } }
-            else {  //mismatched return for current queue (previous timeout)
-                jt.log("iosReturn no match current queue entry, ignoring."); } }
+            const rmo = parseMessageText(mstr);
+            if(!verifyQueueMatch(rmo)) {
+                return; }
+            if(typeof rmo.res === "string" && rmo.res.startsWith("Error - ")) {
+                parseErrorText(rmo); }
+            const mqo = qs[rmo.qname].q.shift();
+            try {
+                if(rmo.errmsg) {
+                    mqo.errf(rmo.errcode, rmo.errmsg); }
+                else {
+                    mqo.cbf(rmo.res); }
+            } catch(e) {
+                jt.log("ios.retv " + (rmo.errmsg? "error" : "success") +
+                       " callback failed: " + e);
+            }
+            if(qs[rmo.qname].q.length) {  //process next in queue
+                callIOS(rmo.qname, qs[rmo.qname].q[0]); } }
     };  //end mgrs.ios returned functions
     }());
 
