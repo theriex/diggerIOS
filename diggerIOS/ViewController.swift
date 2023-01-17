@@ -71,7 +71,13 @@ extension ViewController:WKScriptMessageHandler {
         dpu.conlog("retval: \(dpu.shortstr(retval))")
         let cbstr = "app.svc.iosReturn('\(retval)')"
         //dpu.writeFile("lastScript.js", cbstr)   //for debug analysis
-        self.webView.evaluateJavaScript(cbstr)
+        self.webView.evaluateJavaScript(cbstr,
+            completionHandler: { (obj, err) in
+                if(err != nil) {
+                    self.dpu.conlog("webviewResult eval failed: \(err!)")
+                    let etxt = "Error - webviewResult callback failed"
+                    let eret = "\(qname):\(msgid):\(fname):\(etxt)"
+                    self.webView.evaluateJavaScript(eret) } })
     }
 
 
@@ -177,6 +183,8 @@ extension ViewController:WKScriptMessageHandler {
                         "Error - code: \(sc) \(rstr)") }
                   return }
               DispatchQueue.main.async {
+                  self.dpu.writeFile("hubres.json", rstr)
+                  rstr = self.dpu.xmitEscape(rstr)
                   self.webviewResult(qname, msgid, fname, rstr) } })
         task.resume()
     }

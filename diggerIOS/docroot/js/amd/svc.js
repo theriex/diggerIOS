@@ -194,10 +194,10 @@ app.svc = (function () {
             //on IOS the local database has already been updated, and
             //local memory is up to date.
             return; },
-        makeHubAcctCall: function (verb, endpoint, data, contf/*, errf*/) {
+        makeHubAcctCall: function (verb, endpoint, data, contf, errf) {
             const param = {"endpoint":"/" + endpoint, method:verb, "data":data};
             const fname = "hubAcctCall" + endpoint;
-            mgrs.ios.call(fname, JSON.stringify(param), contf); }
+            mgrs.ios.call(fname, JSON.stringify(param), contf, errf); }
     };  //end mgrs.loc returned functions
     }());
 
@@ -233,20 +233,44 @@ app.svc = (function () {
                 logmsg = msg.slice(0, 150) + "..." + msg.slice(-50); }
             jt.log("callIOS: " + logmsg);
             window.webkit.messageHandlers.diggerMsgHandler.postMessage(msg); }
+        function readSerializedObject(txt) {
+            var oei = 1;
+            var cnt = 1;
+            var esc = false;
+            var inq = false;
+            var ch = "";
+            while(txt && oei < txt.length && cnt) {
+                ch = txt.charAt(oei);
+                if(ch === "\\" && !esc) {
+                    esc = true; }
+                else if(!esc) {  //not an escaped char
+                    if(ch === "\"") {
+                        inq = !inq; }
+                    else if(!inq) {  //not part of a string
+                        if(ch === "{") { cnt += 1; }
+                        if(ch === "}") { cnt -= 1; } } }
+                oei += 1; }
+            return txt.slice(0, oei); }
+        function readSerializedObjectsCSV (txt) {
+            var res = []; var obj;
+            while(txt) {
+                obj = readSerializedObject(txt);
+                res.push(obj);
+                txt = txt.slice(obj.length);
+                if(txt.startsWith(",")) {
+                    txt = txt.slice(1).trim(); } }
+            return res; }
         function analyzeJSON (txt) {
             if(txt.startsWith("[") && txt.endsWith("]")) {
-                jt.log("txt is '['...']'");
-                txt = txt.slice(1, -1);
-                const items = txt.split("},{");
-                jt.log("},{ split yields " + items.length + " items");
-                items.forEach(function (item, idx) {
-                    if(!item.startsWith("{")) { item = "{" + item; }
-                    if(!item.endsWith("}")) { item = item + "}"; }
+                jt.log("analyzeJSON txt is an array: '['...']'");
+                const objs = readSerializedObjectsCSV(txt.slice(1, -1));
+                jt.log("analyzeJSON found " + objs.length + " objs");
+                objs.forEach(function (obj, idx) {
                     try {
-                        JSON.parse(item);
+                        JSON.parse(obj);
                     } catch(e) {
-                        jt.log("item[" + idx + "] " + e);
-                        jt.log(item); } }); } }
+                        jt.log("obj[" + idx + "] " + e);
+                        jt.log(obj); } }); } }
         function unhandledError (code, errtxt) {
             jt.log("Default error handler code: " + code +
                    ", errtxt: " + errtxt); }
@@ -264,11 +288,10 @@ app.svc = (function () {
                 try {
                     res = JSON.parse(res);
                 } catch(e) {
+                    //dump full string to console so it can be debug viewed
+                    jt.log("svc.ios.retv parse err " + e + " JSON res: " + res);
                     analyzeJSON(res);
-                    jt.log("svc.ios.retv err " + e + " JSON text: " +
-                           jt.ellipsis(mstr, 300) + " ... " +
-                           mstr.slice(-300));
-                    res = "Error - JSON parse failed " + e;
+                    res = "Error - parseMessageText failed " + e;
                 } }
             return {"qname":qname, "msgid":msgid, "fname":fname, "res":res}; }
         function parseErrorText (rmo) {
@@ -365,6 +388,8 @@ app.svc = (function () {
             if(sidx >= 0) {
                 fn = fn.slice(sidx + 1); }
             mgrs.ios.call("docContent", "docs/" + fn, contf); },
+        makeHubAcctCall: function (verb, endpoint, data, contf, errf) {
+            mgrs.loc.makeHubAcctCall(verb, endpoint, data, contf, errf); },
         writeConfig: function (cfg, contf, errf) {
             mgrs.loc.writeConfig(cfg, contf, errf); },
         fanGroupAction: function (data, contf/*, errf*/) {
