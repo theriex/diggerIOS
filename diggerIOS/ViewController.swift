@@ -6,6 +6,7 @@ class ViewController: UIViewController, WKUIDelegate {
     var webView: WKWebView!
     var dpu = DiggerProcessingUtilities()
     var dmp = DiggerQueuedPlayerManager()
+    var hubsession: URLSession?
 
     override func loadView() {
         let wvconf = WKWebViewConfiguration()
@@ -75,6 +76,8 @@ extension ViewController:WKScriptMessageHandler {
             completionHandler: { (obj, err) in
                 if(err != nil) {
                     self.dpu.conlog("webviewResult eval failed: \(err!)")
+                    let errscr = self.dpu.writeFile("evalErrScript.js", cbstr)
+                    self.dpu.conlog("errscr: \(self.dpu.shortstr(errscr))")
                     let etxt = "Error - webviewResult callback failed"
                     let eret = "\(qname):\(msgid):\(fname):\(etxt)"
                     self.webView.evaluateJavaScript(eret) } })
@@ -97,9 +100,9 @@ extension ViewController:WKScriptMessageHandler {
         case "writeDigDat":
             return self.dpu.writeFile("digdat.json", param)
         case "requestMediaRead":
-            return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais));
+            return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
         case "requestAudioSummary":
-            return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais));
+            return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
         case "statusSync":
             self.dmp.synchronizePlaybackQueue(param)
             return self.dmp.getPlaybackStatus()
@@ -147,24 +150,30 @@ extension ViewController:WKScriptMessageHandler {
             webviewResult(qname, msgid, fname,
                           "Error - no endpoint specified")
             return }
-        let scfg = URLSessionConfiguration.default
-        scfg.timeoutIntervalForRequest = 6
-        scfg.timeoutIntervalForResource = 20
-        let session = URLSession(configuration: scfg)
+        if(hubsession == nil) {
+            let scfg = URLSessionConfiguration.default
+            hubsession = URLSession(configuration: scfg) }
+        callHub(qname, msgid, fname, endpoint, method, data)
+    }
+
+    func callHub(_ qname:String, _ msgid:String, _ fname:String,
+                 _ endpoint:String, _ method:String, _ data:String) {
+        dpu.conlog("\(qname)\(msgid)\(fname) \(endpoint) \(method) \(data)")
         let requrl = URL(string: "https://diggerhub.com/api" + endpoint)
         var req = URLRequest(url: requrl!)
         req.httpMethod = method
         req.setValue("application/x-www-form-urlencoded",
                      forHTTPHeaderField: "Content-Type")
         req.httpBody = data.data(using: .utf8)
-        let task = session.dataTask(
+        let task = hubsession!.dataTask(
           with: req as URLRequest,
           completionHandler: { (result, response, error) in
               if(error != nil) {
                   DispatchQueue.main.async {
+                      let errtxt = error!.localizedDescription
                       self.webviewResult(
-                        qname, msgid, fname,
-                        "Error - code: 400 Call error: \(error!)") }
+                        qname, msgid, fname, 
+                        "Error - code: 400 Call error: \(errtxt)") }
                   return }
               guard let hursp = response as? HTTPURLResponse else {
                   DispatchQueue.main.async {
@@ -175,7 +184,9 @@ extension ViewController:WKScriptMessageHandler {
               let sc = hursp.statusCode
               var rstr = ""
               if let rdat = result {
-                  rstr = String(bytes: rdat, encoding: .utf8)! }
+                  rstr = String(bytes: rdat, encoding: .utf8)!
+                  //a failed call may have embedded quotes or newlines
+                  rstr = self.dpu.xmitEscape(rstr) }
               if(sc < 200 || sc >= 300) {
                   DispatchQueue.main.async {
                       self.webviewResult(
@@ -183,8 +194,7 @@ extension ViewController:WKScriptMessageHandler {
                         "Error - code: \(sc) \(rstr)") }
                   return }
               DispatchQueue.main.async {
-                  self.dpu.writeFile("hubres.json", rstr)
-                  rstr = self.dpu.xmitEscape(rstr)
+                  //self.dpu.writeFile("hubres.json", rstr)
                   self.webviewResult(qname, msgid, fname, rstr) } })
         task.resume()
     }
@@ -237,6 +247,12 @@ class DiggerProcessingUtilities {
     func xmitEscape(_ json:String) -> String {
         var ej = json
         ej = ej.replacingOccurrences(of:"\n", with:" ")
+        ej = ej.replacingOccurrences(of:"\r", with:" ")
+        ej = ej.replacingOccurrences(of:"\u{B}", with:" ") //line tab (LT)
+        ej = ej.replacingOccurrences(of:"\u{C}", with:" ") //form feed (FF)
+        ej = ej.replacingOccurrences(of:"\u{85}", with:" ") //next line (NEL)
+        ej = ej.replacingOccurrences(of:"\u{2028}", with:" ") //line sep (LS)
+        ej = ej.replacingOccurrences(of:"\u{2029}", with:" ") //para sep (PS)
         ej = ej.replacingOccurrences(of:"  ", with:" ")
         ej = ej.replacingOccurrences(of:"  ", with:" ")
         ej = ej.replacingOccurrences(of:"  ", with:" ")
@@ -249,12 +265,13 @@ class DiggerProcessingUtilities {
     func readAppDocContent(_ param:String) -> String {
         var ret = "Error - File not found: \(param)"
         let pfs = param.split(separator: "/")
-        let subdir = String(pfs[0])
+        let subdir = "docroot/\(String(pfs[0]))"
         let fcs = pfs[1].split(separator: ".")
         let fnm = String(fcs[0])
         let ext = String(fcs[1])
         if let url = Bundle.main.url(forResource: fnm, withExtension: ext,
                                      subdirectory: subdir) {
+            //conlog("readAppDocContent \(url)")
             if FileManager.default.fileExists(atPath: url.path) {
                 ret = readFileURL(url) } }
         return ret
@@ -327,7 +344,7 @@ class DiggerQueuedPlayerManager {
     }
 
     @objc func noteMPNPIDC(_ nfn:Notification) {
-        songJustEnded()
+        songJustChanged()
     }
 
     func initMediaInfo() {
@@ -400,6 +417,7 @@ class DiggerQueuedPlayerManager {
                                         "pos": String(pbpos),
                                         "dur": String(itemDuration),
                                         "path": itemPath])
+        dpu.conlog("getPlaybackStatus: \(statstr)")
         return statstr
     }
 
@@ -451,11 +469,12 @@ class DiggerQueuedPlayerManager {
 
     // helper functions
 
-    func songJustEnded() {
+    func songJustChanged() {
         if(sleepOffset <= 0) {
-            dpu.conlog("songJustEnded sleepOffset \(sleepOffset)")
-            sleeping = true
-            smpc.stop(); }
+            if(!sleeping) {
+                dpu.conlog("songJustChanged sleepOffset \(sleepOffset)")
+                sleeping = true
+                smpc.stop() } }
         else {
             sleepOffset -= 1
             if(queueResetFlag) {
@@ -469,7 +488,7 @@ class DiggerQueuedPlayerManager {
     }
 
     func setPlayerQueueAndStartPlayback(_ updq:[MPMediaItem]) {
-        smpc.stop()  //MPMediaPlayback.  Clears the queue.
+        smpc.stop()  //MPMediaPlayback.  Supposedly clears the queue.
         smpc.nowPlayingItem = nil  //clear state
         smpc.setQueue(with: miaToMIQD(updq))  //MPMusicPlayerController
         sleepOffset = updq.count

@@ -127,6 +127,11 @@ app.svc = (function () {
         getConfig: function () { return config; },
         getDigDat: function () { return dbo; },
         songs: function () { return mgrs.loc.getDigDat().songs; },
+        writeConfig: function (cfg, contf/*, errf*/) {
+            config = cfg;
+            const pjson = JSON.stringify(cfg, null, 2);  //readable file
+            mgrs.ios.call("writeConfig", pjson, contf); },
+        getDatabase: function () { return dbo; },
         loadInitialData: function () {
             mgrs.ios.call("readConfig", null, function (cobj) {
                 config = cobj || {};
@@ -156,10 +161,6 @@ app.svc = (function () {
                               JSON.stringify(stat)); }
             const datstr = JSON.stringify(dbo, null, 2);
             mgrs.ios.call("writeDigDat", datstr, cbf); },
-        writeConfig: function (cfg, contf/*, errf*/) {
-            config = cfg;
-            const pjson = JSON.stringify(cfg, null, 2);  //readable file
-            mgrs.ios.call("writeConfig", pjson, contf); },
         updateSong: function (song, contf/*, errf*/) {
             app.copyUpdatedSongData(song, dbo.songs[song.path]);
             mgrs.loc.writeDigDat(function () {
@@ -178,18 +179,21 @@ app.svc = (function () {
             mgrs.ios.call("fetchAlbum", JSON.stringify(ps), function (paths) {
                 const songs = app.svc.songs();
                 contf(paths.map((path) => songs[path])); }); },
+        writeSongs: function () {
+            mgrs.loc.writeDigDat(function () {
+                jt.log("svc.loc.writeSongs completed successfully"); }); },
         procSyncData: function (res) {
             app.player.logCurrentlyPlaying("svc.loc.procSyncData");
             const updacc = res[0];
-            updacc.diggerVersion = mgrs.gen.plat().appversion;
+            updacc.diggerVersion = mgrs.gen.plat("appversion");
             app.deck.dispatch("hsu", "noteSynchronizedAccount", updacc);
             app.deck.dispatch("hsu", "updateSynchronizedSongs", res.slice(1));
             return res; },
-        hubSyncDat: function (data, contf/*, errf*/) {
+        hubSyncDat: function (data, contf, errf) {
             const param = {endpoint:"/hubsync", method:"POST", "data":data};
             mgrs.ios.call("hubSyncDat", JSON.stringify(param), function (res) {
                 res = mgrs.loc.procSyncData(res);
-                contf(res); }); },
+                contf(res); }, errf); },
         noteUpdatedSongData: function (/*updsong*/) {
             //on IOS the local database has already been updated, and
             //local memory is up to date.
@@ -317,10 +321,12 @@ app.svc = (function () {
                        qs[rmo.qname].q[0].fname + " but received " +
                        rmo.fname + ". Ignoring.");
                 return false; }
-            if(qs[rmo.qname].cc !== parseInt(rmo.msgid, 10)) {
+            const expmid = qs[rmo.qname].q[0].msgnum;
+            const rcvmid = parseInt(rmo.msgid, 10);
+            if(expmid !== rcvmid) {
                 jt.log("ios.retv queue " + rmo.qname + " fname " + rmo.fname +
-                       " is at cc " + qs[rmo.qname].cc + " but received " +
-                       rmo.msgid + ". Continuing despite sequence error.");
+                       " expected msgid " + expmid + " but received " +
+                       rcvmid + ". Continuing despite sequence error.");
                 return true; }
             return true; }
     return {
