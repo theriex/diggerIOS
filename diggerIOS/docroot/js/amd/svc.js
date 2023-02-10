@@ -194,10 +194,10 @@ app.svc = (function () {
             mgrs.ios.call("hubSyncDat", JSON.stringify(param), function (res) {
                 res = mgrs.loc.procSyncData(res);
                 contf(res); }, errf); },
-        noteUpdatedSongData: function (/*updsong*/) {
+        noteUpdatedSongData: function (updsong) {
             //on IOS the local database has already been updated, and
             //local memory is up to date.
-            return; },
+            return dbo.songs[updsong.path]; },
         makeHubAcctCall: function (verb, endpoint, data, contf, errf) {
             const param = {"endpoint":"/" + endpoint, method:verb, "data":data};
             const fname = "hubAcctCall" + endpoint;
