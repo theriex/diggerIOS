@@ -10,7 +10,7 @@ app.svc = (function () {
 
     //Screenshot manager returns demo data for simulator UI displays
     mgrs.scr = (function () {
-        var active = true;
+        var active = false;  //true if stubbed returns demo data
         const dummyStatus = {state:"paused", pos:12*1000, dur:210*1000,
                              path:"SongU.mp3"};  //oldest
         const kwdefs = {Social: {pos: 1, sc: 0, ig: 0, dsc: ""},
@@ -111,29 +111,29 @@ app.svc = (function () {
                 //bfriend thanks for sharing Song P
                 {sndr:"1236", rcvr:"1234", msgtype:"shresp",
                  created:"2023-01-03T20:42:12.074Z", status:"open",
-                 emsnds:"", srcmsg:"fake", songid:"fake",
+                 srcmsg:"fake", songid:"fake",
                  ti:"Song P", ar:"Artist P", ab:"Album P"},
                 //afriend great Song G - Awesome bassline
                 {sndr:"1235", rcvr:"1234", msgtype:"share",
                  created:"2023-01-04T20:42:12.074Z", status:"open",
-                 emsnds:"", srcmsg:"", songid:"fake",
+                 srcmsg:"", songid:"fake",
                  ti:"Song G", ar:"Artist G", ab:"Album G",
                  nt:"Awesome bassline"},
                 //fabDJ recommends Song J
                 {sndr:"1238", rcvr:"1234", msgtype:"recommendation",
                  created:"2023-01-05T20:42:12.074Z", status:"open",
-                 emsnds:"", srcmsg:"", songid:"fake",
+                 srcmsg:"", songid:"fake",
                  ti:"Song J", ar:"Artist J", ab:"Album J",
                  nt:"Super sticky original groove"},
                 //cfriend thanks for recommending Song X
                 {sndr:"1237", rcvr:"1234", msgtype:"recresp",
                  created:"2023-01-06T20:42:12.074Z", status:"open",
-                 emsnds:"", srcmsg:"fake", songid:"fake",
+                 srcmsg:"fake", songid:"fake",
                  ti:"Song X", ar:"Artist X", ab:"Album X"},
                 //afriend Song S - Melody gets stuck in my head every time.
                 {sndr:"1235", rcvr:"1234", msgtype:"share",
                  created:"2023-01-07T20:42:12.074Z", status:"open",
-                 emsnds:"", srcmsg:"", songid:"fake",
+                 srcmsg:"", songid:"fake",
                  ti:"Song S", ar:"Artist S", ab:"Album S",
                  nt:"Melody gets stuck in my head every time."}]};
     return {
@@ -339,7 +339,7 @@ app.svc = (function () {
         makeHubAcctCall: function (verb, endpoint, data, contf, errf) {
             const param = {"endpoint":"/" + endpoint, method:verb, "data":data};
             const fname = "hubAcctCall" + endpoint;
-            if(mgrs.scr.stubbbed(fname, param, contf, errf)) {
+            if(mgrs.scr.stubbed(fname, param, contf, errf)) {
                 jt.log(fname + " call handled by screenshot manager");
                 return; }
             mgrs.ios.call(fname, JSON.stringify(param), contf, errf); }
