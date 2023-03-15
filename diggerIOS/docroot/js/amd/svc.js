@@ -1,11 +1,13 @@
 /*global app, jt, Android, console */
 /*jslint browser, white, long, unordered */
+/*global console */
 
 //Server communications for IOS platform
 app.svc = (function () {
     "use strict";
 
     var mgrs = {};  //general container for managers
+    const clg = console.log;
 
 
     //Screenshot manager returns demo data for simulator UI displays
@@ -80,16 +82,16 @@ app.svc = (function () {
                         "scanned": "2023-02-13T20:42:12.320Z",
                         "songcount": 10,
                         "songs": {
-                            "SongY.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongY.mp3","mrd": "C|Song Y|Artist Y|Album Y","ar": "Artist Y","ab": "Album Y","ti": "Song Y","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongX.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongX.mp3","mrd": "C|Song X|Artist X|Album X","ar": "Artist X","ab": "Album X","ti": "Song X","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongW.mp3": {"fq": "P","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongW.mp3","mrd": "C|Song W|Artist W|Album W","ar": "Artist W","ab": "Album W","ti": "Song W","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongV.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongV.mp3","mrd": "C|Song V|Artist V|Album V","ar": "Artist V","ab": "Album V","ti": "Song V","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongU.mp3": {"fq": "P","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongU.mp3","mrd": "C|Song U|Artist U|Album U","ar": "Artist U","ab": "Album U","ti": "Song U","lp":""},
-                            "SongT.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongT.mp3","mrd": "C|Song T|Artist T|Album T","ar": "Artist T","ab": "Album T","ti": "Song T","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongS.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongS.mp3","mrd": "C|Song S|Artist S|Album S","ar": "Artist S","ab": "Album S","ti": "Song S","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongR.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongR.mp3","mrd": "C|Song R|Artist R|Album R","ar": "Artist R","ab": "Album R","ti": "Song R","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongQ.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongQ.mp3","mrd": "C|Song Q|Artist Q|Album Q","ar": "Artist Q","ab": "Album Q","ti": "Song Q","lp":"2023-02-13T20:42:12.074Z"},
-                            "SongP.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongP.mp3","mrd": "C|Song P|Artist P|Album P","ar": "Artist P","ab": "Album P","ti": "Song P","lp":"2023-02-13T20:42:12.074Z"}},
+                            "SongY.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongY.mp3","mrd": "C|Song Y|Artist Y|Album Y","ar": "Artist Y","ab": "Album Y","ti": "Song Y","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongX.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongX.mp3","mrd": "C|Song X|Artist X|Album X","ar": "Artist X","ab": "Album X","ti": "Song X","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongW.mp3": {"fq": "P","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongW.mp3","mrd": "C|Song W|Artist W|Album W","ar": "Artist W","ab": "Album W","ti": "Song W","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongV.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongV.mp3","mrd": "C|Song V|Artist V|Album V","ar": "Artist V","ab": "Album V","ti": "Song V","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongU.mp3": {"fq": "P","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongU.mp3","mrd": "C|Song U|Artist U|Album U","ar": "Artist U","ab": "Album U","ti": "Song U","lp":"","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongT.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongT.mp3","mrd": "C|Song T|Artist T|Album T","ar": "Artist T","ab": "Album T","ti": "Song T","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongS.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongS.mp3","mrd": "C|Song S|Artist S|Album S","ar": "Artist S","ab": "Album S","ti": "Song S","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongR.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongR.mp3","mrd": "C|Song R|Artist R|Album R","ar": "Artist R","ab": "Album R","ti": "Song R","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongQ.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongQ.mp3","mrd": "C|Song Q|Artist Q|Album Q","ar": "Artist Q","ab": "Album Q","ti": "Song Q","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"},
+                            "SongP.mp3": {"fq": "N","al": 40,"el": 70,"kws": "Office,Social","rv": 8,"path": "SongP.mp3","mrd": "C|Song P|Artist P|Album P","ar": "Artist P","ab": "Album P","ti": "Song P","lp":"2023-02-13T20:42:12.074Z","dsId":"fakedbid","modified":"2023-02-16T00:00:00.000Z"}},
                         "scanstart": "2023-02-13T20:42:12.274Z"},
             requestMediaRead:[{"path": "SongY.mp3","artist": "Artist Y","album": "Album Y","title": "Song Y", "lp":"2023-02-13T20:42:12.074Z"},
                               {"path": "SongX.mp3","artist": "Artist X","album": "Album X","title": "Song X", "lp":"2023-02-13T20:42:12.074Z"},
@@ -135,7 +137,8 @@ app.svc = (function () {
                  created:"2023-01-07T20:42:12.074Z", status:"open",
                  srcmsg:"", songid:"fake",
                  ti:"Song S", ar:"Artist S", ab:"Album S",
-                 nt:"Melody gets stuck in my head every time."}]};
+                 nt:"Melody gets stuck in my head every time."}],
+            "hubsync":[demoacct]};
     return {
         stubbed: function (iosFuncName, ignore /*param*/, callback/*, errf*/) {
             if(active && rets[iosFuncName]) {
@@ -153,7 +156,7 @@ app.svc = (function () {
             qm = app.player.dispatch("slp", "limitToSleepQueueMax", qm);
             const dst = app.deck.getState(qm);  //songs currently on deck
             if(dst.disp === "album") {
-                paths = dst.disp.info.songs.map((s) => s.path); }
+                paths = dst.det.info.songs.map((s) => s.path); }
             else {  //send currently playing song as first path in list
                 paths = dst.det.map((s) => s.path);
                 paths.unshift(app.player.song().path); }
@@ -231,6 +234,7 @@ app.svc = (function () {
     return {
         verifyDatabase: function (dbo) {
             var stat = app.top.dispatch("dbc", "verifyDatabase", dbo);
+            dbo.version = mgrs.gen.plat("appversion");
             if(stat.verified) { return dbo; }
             jt.log("svc.db.verifyDatabase re-initializing dbo, received " +
                    JSON.stringify(stat));
@@ -261,6 +265,15 @@ app.svc = (function () {
     mgrs.loc = (function () {
         var config = null;
         var dbo = null;
+        function synthesizeAlbumPaths(song) {
+            //no relative paths to work with so can only reason from ar/ab
+            //ar may vary (e.g. "main artist featuring whoever")
+            var abs = [];
+            Object.entries(dbo.songs).forEach(function ([p, s]) {
+                if(song.ab === s.ab && (song.ar.startsWith(s.ar) ||
+                                        s.ar.startsWith(song.ar))) {
+                    abs.push(p); } });
+            return abs; }
     return {
         getConfig: function () { return config; },
         getDigDat: function () { return dbo; },
@@ -312,11 +325,15 @@ app.svc = (function () {
             return; },
         fetchSongs: function (contf/*, errf*/) {  //call stack as if web call
             setTimeout(function () { contf(dbo.songs); }, 50); },
-        fetchAlbum: function (contf/*, errf*/) {
-            const ps = app.player.song();  //deck already checked not null
-            mgrs.ios.call("fetchAlbum", JSON.stringify(ps), function (paths) {
+        fetchAlbum: function (np, contf/*, errf*/) {
+            const qdat = JSON.stringify({ar:np.ar, ti:np.ti});
+            mgrs.ios.call("fetchAlbum", qdat, function (paths) {
+                if(!paths || !paths.length) {  //should at least find curr song
+                    clg("No album song paths returned, synthesizing");
+                    paths = synthesizeAlbumPaths(np); }
                 const songs = app.svc.songs();
-                contf(paths.map((path) => songs[path])); }); },
+                const abs = paths.map((path) => songs[path]);
+                contf(np, abs); }); },
         writeSongs: function () {
             mgrs.loc.writeDigDat(function () {
                 jt.log("svc.loc.writeSongs completed successfully"); }); },
@@ -329,6 +346,9 @@ app.svc = (function () {
             return res; },
         hubSyncDat: function (data, contf, errf) {
             const param = {endpoint:"/hubsync", method:"POST", "data":data};
+            if(mgrs.scr.stubbed("hubsync", param, contf, errf)) {
+                jt.log("hubsync call handled by screenshot manager");
+                return; }
             mgrs.ios.call("hubSyncDat", JSON.stringify(param), function (res) {
                 res = mgrs.loc.procSyncData(res);
                 contf(res); }, errf); },
@@ -553,7 +573,7 @@ app.svc = (function () {
                 contf(res); }); },
         fanMessage: function (data, contf/*, errf*/) {
             if(mgrs.scr.stubbed("hubAcctCallmessages", data, contf)) {
-                jt.log(iosFuncName + " call handled by screenshot manager");
+                jt.log("fanMessage call handled by screenshot manager");
                 return; }
             const param = {endpoint:"/fanmsg", method:"POST", "data":data};
             mgrs.ios.call("hubfanmsg", JSON.stringify(param), contf); },
@@ -569,7 +589,7 @@ return {
     loadDigDat: function (cbf) { mgrs.loc.loadDigDat(cbf); },
     songs: function () { return mgrs.loc.getDigDat().songs; },
     fetchSongs: function (cf, ef) { mgrs.loc.fetchSongs(cf, ef); },
-    fetchAlbum: function (cf, ef) { mgrs.loc.fetchAlbum(cf, ef); },
+    fetchAlbum: function (np, cf, ef) { mgrs.loc.fetchAlbum(np, cf, ef); },
     updateSong: function (song, cf, ef) { mgrs.loc.updateSong(song, cf, ef); },
     noteUpdatedState: function (label) { mgrs.loc.noteUpdatedState(label); },
     urlOpenSupp: function () { return false; }, //links break webview

@@ -84,12 +84,18 @@ extension ViewController:WKScriptMessageHandler {
     }
 
 
+    func binfo(_ key:String) -> String {
+        let rs = Bundle.main.infoDictionary?[key] as? String ?? "unknown"
+        return rs
+    }
+
+
     func handleDiggerCall(_ fname:String, _ param:String) -> String {
         switch(fname) {
         case "getVersionCode":
-            return "alpha"
-        case "getAppVersion":  //v + CFBundleVersion
-            return "v1.0.?"
+            return binfo("CFBundleVersion")
+        case "getAppVersion":
+            return "v\(binfo("CFBundleShortVersionString"))"
         case "readConfig":
             return self.dpu.readFile("config.json")
         case "writeConfig":
@@ -455,15 +461,19 @@ class DiggerQueuedPlayerManager {
                     let artist = sj["ar"]
                     let title = sj["ti"]
                     var mis = [MPMediaItem]()
-                    for (_, mi) in mibp {
+                    for (_, mi) in mibp {  //walk dict
                         if(mi.artist == artist && mi.albumTitle == title) {
                             mis.append(mi) } }
                     mis.sort(by: {$0.albumTrackNumber < $1.albumTrackNumber})
                     let paths = mis.map({$0.assetURL!.absoluteString})
                     rets = dpu.toJSONString(paths) }
+                else {
+                    dpu.conlog("getAlbumSongs unable to load JSON") }
             } catch {
                 dpu.conlog("getAlbumSongs failed: \(error)")
             } }
+        else {
+            dpu.conlog("getAlbum songs, no data for now playing song") }
         return rets
     }
 
