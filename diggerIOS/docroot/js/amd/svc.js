@@ -319,6 +319,15 @@ app.svc = (function () {
                 app.top.dispatch("srs", "syncToHub");  //sched sync
                 if(contf) {
                     contf(dbo.songs[song.path]); } }); },
+        updateMultipleSongs: function (songs, contf/*, errf*/) {
+            var rsgs = [];
+            songs.forEach(function (song) {
+                app.copyUpdatedSongData(dbo.songs[song.path], song);
+                rsgs.push(dbo.songs[song.path]); });
+            mgrs.loc.writeDigDat(function () {
+                app.top.dispatch("srs", "syncToHub");  //sched sync
+                if(contf) {
+                    contf(rsgs); } }); },
         noteUpdatedState: function (/*label*/) {
             //If label === "deck" and the IOS platform needs to keep info
             //outside the app UI, this is the place to update that data
@@ -544,8 +553,8 @@ app.svc = (function () {
             versioncode: ""};
     return {
         plat: function (key) { return platconf[key]; },
-        updateMultipleSongs: function (/*updss, contf, errf*/) {
-            jt.err("svc.gen.updateMultipleSongs is web only"); },
+        updateMultipleSongs: function (songs, contf, errf) {
+            return mgrs.loc.updateMultipleSongs(songs, contf, errf); },
         initialize: function () {  //don't block init of rest of modules
             setTimeout(mgrs.loc.loadInitialData, 50);
             mgrs.ios.call("getVersionCode", null, function (val) {
@@ -578,7 +587,11 @@ app.svc = (function () {
             const param = {endpoint:"/fanmsg", method:"POST", "data":data};
             mgrs.ios.call("hubfanmsg", JSON.stringify(param), contf); },
         copyToClipboard: function (txt, contf/*, errf*/) {
-            mgrs.ios.call("copyToClipboard", txt, contf); }
+            mgrs.ios.call("copyToClipboard", txt, contf); },
+        tlasupp: function (act) {
+            if(act.id === "ignorefldrsbutton") {
+                return false; }
+            return true; }
     };  //end mgrs.gen returned functions
     }());
 
@@ -594,6 +607,7 @@ return {
     noteUpdatedState: function (label) { mgrs.loc.noteUpdatedState(label); },
     urlOpenSupp: function () { return false; }, //links break webview
     docContent: function (du, cf) { mgrs.gen.docContent(du, cf); },
+    topLibActionSupported: function (a) { return mgrs.gen.tlasupp(a); },
     writeConfig: function (cfg, cf, ef) { mgrs.gen.writeConfig(cfg, cf, ef); },
     dispatch: function (mgrname, fname, ...args) {
         try {

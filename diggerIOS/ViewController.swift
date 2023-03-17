@@ -548,7 +548,10 @@ class DiggerQueuedPlayerManager {
                 if let psa = try JSONSerialization.jsonObject(
                      with: data,
                      options: .mutableContainers) as? [String] {
-                    mia = psa.map({ mibp[$0]! }) }
+                    //might get a path with no corresponding local media item
+                    for path in psa {
+                        if let mi = mibp[path] {
+                            mia.append(mi) } } }
             } catch {
                 dpu.conlog("pathsToMIA failed: \(error)")
             } }
