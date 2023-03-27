@@ -173,22 +173,15 @@ app.svc = (function () {
                               JSON.stringify(stat)); }
             const datstr = JSON.stringify(dbo, null, 2);
             mgrs.ios.call("writeDigDat", datstr, cbf); },
-        updateSong: function (song, contf/*, errf*/) {
-            app.copyUpdatedSongData(song, dbo.songs[song.path]);
-            mgrs.loc.writeDigDat(function () {
-                jt.out("modindspan", "");  //turn off indicator light
-                app.top.dispatch("srs", "syncToHub");  //sched sync
-                if(contf) {
-                    contf(dbo.songs[song.path]); } }); },
-        updateMultipleSongs: function (songs, contf/*, errf*/) {
-            var rsgs = [];
+        saveSongs: function (songs, contf/*, errf*/) {
+            var upds = [];
             songs.forEach(function (song) {
                 app.copyUpdatedSongData(dbo.songs[song.path], song);
-                rsgs.push(dbo.songs[song.path]); });
+                upds.push(dbo.songs[song.path]); });
             mgrs.loc.writeDigDat(function () {
                 app.top.dispatch("srs", "syncToHub");  //sched sync
                 if(contf) {
-                    contf(rsgs); } }); },
+                    contf(upds); } }); },
         noteUpdatedState: function (/*label*/) {
             //If label === "deck" and the IOS platform needs to keep info
             //outside the app UI, this is the place to update that data
@@ -460,7 +453,7 @@ return {
     songs: function () { return mgrs.loc.getDigDat().songs; },
     fetchSongs: function (cf, ef) { mgrs.loc.fetchSongs(cf, ef); },
     fetchAlbum: function (np, cf, ef) { mgrs.loc.fetchAlbum(np, cf, ef); },
-    updateSong: function (song, cf, ef) { mgrs.loc.updateSong(song, cf, ef); },
+    saveSongs: function (songs, cf, ef) { mgrs.loc.saveSongs(songs, cf, ef); },
     noteUpdatedState: function (label) { mgrs.loc.noteUpdatedState(label); },
     urlOpenSupp: function () { return false; }, //links break webview
     docContent: function (du, cf) { mgrs.gen.docContent(du, cf); },
