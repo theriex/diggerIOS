@@ -23,7 +23,10 @@ app.svc = (function () {
                 paths.unshift(app.player.song().path); }
             return JSON.stringify(paths); }
         function notePlaybackState (stat) {
-            app.player.dispatch("mob", "notePlaybackStatus", stat); }
+            if(stat && stat.path) {
+                app.player.dispatch("mob", "notePlaybackStatus", stat); }
+            else {
+                jt.log("svc.mp.notePlaybackState ignoring: " + stat); } }
     return {
         requestStatusUpdate: function (/*contf*/) {
             mgrs.ios.call("statusSync", deckPaths(), notePlaybackState); },

@@ -15,6 +15,8 @@ class ViewController: UIViewController, WKUIDelegate {
         webView.uiDelegate = self
         webView.scrollView.bounces = false  //display is fixed on screen
         webView.scrollView.isScrollEnabled = false  //scroll within panels only
+        if #available(macOS 13.3, iOS 16.4, tvOS 16.4, *) {
+            webView.isInspectable = true }
         view = webView
     }
 
