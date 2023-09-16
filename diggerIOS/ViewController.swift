@@ -421,10 +421,8 @@ class DiggerQueuedPlayerManager {
             itemDuration = dpu.timeIntervalToMS(npi.playbackDuration)
             if let url = npi.assetURL {
                 itemPath = url.absoluteString } }
-        let statstr = dpu.toJSONString(["state": pbstat,
-                                        "pos": String(pbpos),
-                                        "dur": String(itemDuration),
-                                        "path": itemPath])
+        //Not worth declaring an object for dpu.toJSONString to understand
+        let statstr = "{\"state\":\"\(pbstat)\",\"pos\":\(pbpos),\"dur\":\(itemDuration),\"path\":\"\(itemPath)\"}"
         dpu.conlog("getPlaybackStatus: \(statstr)")
         return statstr
     }

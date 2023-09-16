@@ -22,22 +22,29 @@ app.svc = (function () {
                 paths = dst.det.map((s) => s.path);
                 paths.unshift(app.player.song().path); }
             return JSON.stringify(paths); }
-        function notePlaybackState (stat) {
+        function notePlaybackState (stat, src) {
             if(stat && stat.path) {
                 app.player.dispatch("mob", "notePlaybackStatus", stat); }
             else {
-                jt.log("svc.mp.notePlaybackState ignoring: " + stat); } }
+                src = src || "unknown";
+                jt.log("svc.mp.notePlaybackState ignoring return from " +
+                       src + ": " + JSON.stringify(stat)); } }
     return {
         requestStatusUpdate: function (/*contf*/) {
-            mgrs.ios.call("statusSync", deckPaths(), notePlaybackState); },
+            mgrs.ios.call("statusSync", deckPaths(), function (stat) {
+                notePlaybackState(stat, "statusSync"); }); },
         pause: function () {
-            mgrs.ios.call("pausePlayback", "", notePlaybackState); },
+            mgrs.ios.call("pausePlayback", "", function (stat) {
+                notePlaybackState(stat, "pausePlayback"); }); },
         resume: function () {
-            mgrs.ios.call("resumePlayback", "", notePlaybackState); },
+            mgrs.ios.call("resumePlayback", "", function (stat) {
+                notePlaybackState(stat, "resumePlayback"); }); },
         seek: function (ms) {
-            mgrs.ios.call("seekToOffset", String(ms), notePlaybackState); },
+            mgrs.ios.call("seekToOffset", String(ms), function (stat) {
+                notePlaybackState(stat, "seekToOffset"); }); },
         playSong: function (/*path*/) {  //need entire queue, not just song
-            mgrs.ios.call("startPlayback", deckPaths(), notePlaybackState); }
+            mgrs.ios.call("startPlayback", deckPaths(), function (stat) {
+                notePlaybackState(stat, "startPlayback"); }); }
     };  //end mgrs.mp returned functions
     }());
 
