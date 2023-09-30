@@ -222,6 +222,7 @@ app.svc = (function () {
                 return; }
             const param = {endpoint:"/hubsync", method:"POST", "data":data};
             mgrs.ios.call("hubSyncDat", JSON.stringify(param), function (res) {
+                app.top.dispatch("srs", "hubStatInfo", "receiving...");
                 res = mgrs.loc.procSyncData(res);
                 contf(res); }, errf); },
         noteUpdatedSongData: function (updsong) {
