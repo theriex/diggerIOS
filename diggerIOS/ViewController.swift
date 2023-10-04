@@ -108,6 +108,7 @@ extension ViewController:WKScriptMessageHandler {
         case "writeDigDat":
             return self.dpu.writeFile("digdat.json", param)
         case "requestMediaRead":
+            self.dmp.initMediaInfo()
             return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
         case "requestAudioSummary":
             return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
