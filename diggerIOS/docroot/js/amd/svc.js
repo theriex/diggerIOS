@@ -125,7 +125,7 @@ app.svc = (function () {
                     jt.out(dbstatdiv, "");
                     app.top.markIgnoreSongs();
                     app.top.rebuildKeywords();
-                    app.deck.update("rebuildSongData");
+                    app.deck.songDataChanged("rebuildSongData");
                     if(apresloadcmd === "rebuild") {
                         app.player.next(); } }); }); }
     };  //end mgrs.sg returned functions
@@ -162,11 +162,7 @@ app.svc = (function () {
                     config = config || {};  //default account set up in top.js
                     dbo = mgrs.sg.verifyDatabase(dbo);
                     //let rest of app know data is ready, then check library:
-                    const startdata = {"config":config, songdata:dbo};
-                    const uims = ["top",      //display login name
-                                  "filter"];  //show settings, app.deck.update
-                    uims.forEach(function (uim) {
-                        app[uim].initialDataLoaded(startdata); });
+                    app.initialDataLoaded({"config":config, songdata:dbo});
                     if(!dbo.scanned) {
                         setTimeout(mgrs.sg.loadLibrary, 50); } }); }); },
         loadLibrary: function (procdivid) {
