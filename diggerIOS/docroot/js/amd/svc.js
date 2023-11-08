@@ -13,15 +13,8 @@ app.svc = (function () {
     //Media Playback manager handles transport and playback calls
     mgrs.mp = (function () {
         function deckPaths () {
-            var qm = app.deck.stableDeckLength(); var paths;
-            qm = app.player.dispatch("slp", "limitToSleepQueueMax", qm);
-            const dst = app.deck.getState(qm);  //songs currently on deck
-            if(dst.disp === "album") {
-                paths = dst.det.info.songs.map((s) => s.path); }
-            else {  //send currently playing song as first path in list
-                paths = dst.det.map((s) => s.path);
-                paths.unshift(app.player.song().path); }
-            return JSON.stringify(paths); }
+            const playstate = app.deck.getPlaybackState(true, "paths");
+            return JSON.stringify(playstate.qsi); }
         function notePlaybackState (stat, src) {
             if(stat && stat.path) {
                 app.player.dispatch("mob", "notePlaybackStatus", stat); }
