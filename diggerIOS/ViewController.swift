@@ -4,9 +4,8 @@ import MediaPlayer
 
 class ViewController: UIViewController, WKUIDelegate {
     var webView: WKWebView!
+    var dmh = DiggerMessageHandler()
     var dpu = DiggerProcessingUtilities()
-    var dmp = DiggerQueuedPlayerManager()
-    var hubsession: URLSession?
 
     override func loadView() {
         let wvconf = WKWebViewConfiguration()
@@ -18,6 +17,7 @@ class ViewController: UIViewController, WKUIDelegate {
         if #available(macOS 13.3, iOS 16.4, tvOS 16.4, *) {
             webView.isInspectable = true }
         view = webView
+        dmh.setCallbackWebView(webView)
     }
 
     override func viewDidLoad() {
@@ -59,6 +59,29 @@ extension ViewController:WKScriptMessageHandler {
         idx = mstr.index(after: idx)  //idx += 1
         mstr.removeSubrange(mstr.startIndex..<idx)  //mutate mstr
         //dpu.conlog("userContentController param: \(mstr)")
+        dmh.handleDiggerMessage(qname, msgid, fname, mstr)
+    }
+}
+
+
+//////////////////////////////////////////////////////////////////////
+//
+// Handle platform request messages from the Digger App
+//
+//////////////////////////////////////////////////////////////////////
+class DiggerMessageHandler {
+    var dmhwv: WKWebView!
+    var hubsession: URLSession?
+    var dpu = DiggerProcessingUtilities()
+    var dmp = DiggerQueuedPlayerManager()
+
+    func setCallbackWebView(_ webv:WKWebView) {
+        dmhwv = webv
+        dmp.setCallbackMessageHandler(self)
+    }
+
+    func handleDiggerMessage(_ qname:String, _ msgid:String, _ fname:String,
+                             _ mstr:String) {
         if(fname.starts(with:"hub")) {
             handleHubCall(qname, msgid, fname, mstr) }
         else {
@@ -74,7 +97,7 @@ extension ViewController:WKScriptMessageHandler {
         dpu.conlog("retval: \(dpu.shortstr(retval))")
         let cbstr = "app.svc.iosReturn('\(retval)')"
         //dpu.writeFile("lastScript.js", cbstr)   //for debug analysis
-        self.webView.evaluateJavaScript(cbstr,
+        self.dmhwv.evaluateJavaScript(cbstr,
             completionHandler: { (obj, err) in
                 if(err != nil) {
                     self.dpu.conlog("webviewResult eval failed: \(err!)")
@@ -82,7 +105,7 @@ extension ViewController:WKScriptMessageHandler {
                     self.dpu.conlog("errscr: \(self.dpu.shortstr(errscr))")
                     let etxt = "Error - webviewResult callback failed"
                     let eret = "\(qname):\(msgid):\(fname):\(etxt)"
-                    self.webView.evaluateJavaScript(eret) } })
+                    self.dmhwv.evaluateJavaScript(eret) } })
     }
 
 
@@ -103,12 +126,12 @@ extension ViewController:WKScriptMessageHandler {
         case "writeConfig":
             return self.dpu.writeFile("config.json", param)
         case "readDigDat":
-            self.dmp.initMediaInfo()
+            self.dmp.initMediaInfo("readDigDat")
             return self.dpu.readFile("digdat.json")
         case "writeDigDat":
             return self.dpu.writeFile("digdat.json", param)
         case "requestMediaRead":
-            self.dmp.initMediaInfo()
+            self.dmp.initMediaInfo("requestMediaRead")
             return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
         case "requestAudioSummary":
             return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
@@ -216,6 +239,7 @@ extension ViewController:WKScriptMessageHandler {
 //
 //////////////////////////////////////////////////////////////////////
 class DiggerProcessingUtilities {
+
     func conlog(_ txt:String) {
         let fmat = DateFormatter()
         fmat.dateStyle = .medium
@@ -343,6 +367,8 @@ class DiggerQueuedPlayerManager {
     var queueResetFlag = false
     var mibp = [String: MPMediaItem]()  //Media items by path
     var dais = [[String: String]]()  //Digger Audio Items
+    var medchk = "unchecked"
+    var dmh: DiggerMessageHandler!
 
     init() {
         NotificationCenter.default.addObserver(
@@ -356,21 +382,63 @@ class DiggerQueuedPlayerManager {
         songJustChanged()
     }
 
-    func initMediaInfo() {
+    func setCallbackMessageHandler(_ dmhobj:DiggerMessageHandler) {
+        dmh = dmhobj
+    }
+
+    func checkMediaAuthorization() {
+        if #available(iOS 9.3, *) {  //9.3 or later has permissioning
+            dpu.conlog("checkMediaAuthorization request authorizationStatus")
+            let authstat = MPMediaLibrary.authorizationStatus()
+            switch authstat {
+            case .notDetermined: //show permission prompt if not asked yet
+                dpu.conlog("checkMediaAuthorization: .notDetermined")
+                medchk = "asking"
+                MPMediaLibrary.requestAuthorization({[weak self] (newAuthorizationStatus: MPMediaLibraryAuthorizationStatus) in
+                    if(newAuthorizationStatus == .authorized) {
+                        self?.medchk = "authorized" }
+                    else {
+                        self?.medchk = "denied" }
+                    self?.initMediaInfo("iosdlg") })
+                return
+            case .denied, .restricted:  //can't use MPMediaQuery
+                dpu.conlog("checkMediaAuthorization: .denied or .restricted")
+                medchk = "denied"
+                return
+            case .authorized:
+                medchk = "authorized"
+                dpu.conlog("checkMediaAuthorization: .authorized")
+                break
+            default:  //not sure what case this is, but worth trying read
+                medchk = "authorized"
+                dpu.conlog("checkMediaAuthorization default case fallthrough")
+                break } }
+        else {
+            medchk = "authorized" }
+    }
+
+    func initMediaInfo(_ caller:String) {
         mibp = [String: MPMediaItem]()  //reset
         dais = [[String: String]]()  //reset
+        if(medchk == "asking") { return }  //don't want two threads asking
+        if(medchk != "authorized") { return checkMediaAuthorization() }
         let datezero = Date(timeIntervalSince1970: 0)
         let mqry = MPMediaQuery.songs()
         if let items = mqry.items {
             for item in items {
                 if let url = item.assetURL {  //must have a url to play it
-                    mibp[url.absoluteString] = item
+                    let path = url.absoluteString
+                    mibp[path] = item
                     let lpd = item.lastPlayedDate ?? datezero
-                    dais.append(["path": url.absoluteString,
+                    dais.append(["path": path,
                                  "title": item.title ?? "",
                                  "artist": item.artist ?? "",
                                  "album": item.albumTitle ?? "",
                                  "lp": lpd.ISO8601Format() ]) } } }
+        if(caller == "iosdlg") {
+            DispatchQueue.main.async {  //needs to run on main thread
+                self.dmh.webviewResult("iospush", "iosdlg", "initMediaInfo",
+                                       "") } }
     }
 
     func synchronizePlaybackQueue(_ paths:String) {
@@ -443,9 +511,16 @@ class DiggerQueuedPlayerManager {
         return getPlaybackStatus()
     }
 
+    func consoleLogMediaQueue(_ queue:[MPMediaItem]) {
+        dpu.conlog("consoleLogMediaQueue media items:")
+        for mi in queue {
+            dpu.conlog("  \(mi.title ?? "NoTitleFound")") }
+    }
+
     func startPlayback(_ param:String) -> String {
         dpu.conlog("Starting playback")
         let updq = pathsToMIA(param)
+        consoleLogMediaQueue(updq)
         if(updq.count == 0) {
             return "Error - Empty queue given, startPlayback call ignored" }
         setDiggerQueue(updq, "playnow")
@@ -460,10 +535,10 @@ class DiggerQueuedPlayerManager {
                      with: data,
                      options: .mutableContainers) as? [String:String] {
                     let artist = sj["ar"]
-                    let title = sj["ti"]
+                    let album = sj["ab"]
                     var mis = [MPMediaItem]()
                     for (_, mi) in mibp {  //walk dict
-                        if(mi.artist == artist && mi.albumTitle == title) {
+                        if(mi.artist == artist && mi.albumTitle == album) {
                             mis.append(mi) } }
                     mis.sort(by: {$0.albumTrackNumber < $1.albumTrackNumber})
                     let paths = mis.map({$0.assetURL!.absoluteString})
@@ -552,6 +627,7 @@ class DiggerQueuedPlayerManager {
                     //might get a path with no corresponding local media item
                     for path in psa {
                         if let mi = mibp[path] {
+                            //dpu.conlog("pathsToMIA \(mi.title ?? "NoTitle")")
                             mia.append(mi) } } }
             } catch {
                 dpu.conlog("pathsToMIA failed: \(error)")

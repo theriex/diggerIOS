@@ -188,7 +188,7 @@ app.svc = (function () {
         fetchSongs: function (contf/*, errf*/) {  //call stack as if web call
             setTimeout(function () { contf(dbo.songs); }, 50); },
         fetchAlbum: function (np, contf/*, errf*/) {
-            const qdat = JSON.stringify({ar:np.ar, ti:np.ti});
+            const qdat = JSON.stringify({ar:np.ar, ab:np.ab});
             mgrs.ios.call("fetchAlbum", qdat, function (paths) {
                 if(!paths || !paths.length) {  //should at least find curr song
                     clg("No album song paths returned, synthesizing");
@@ -333,7 +333,14 @@ app.svc = (function () {
             else {
                 rmo.errcode = 0; }
             rmo.errmsg = errmsg; }
+        function handlePushMessage(rmo) {
+            jt.log("handlePushMessage " + JSON.stringify(rmo));
+            if(rmo.fname === "initMediaInfo") {
+                mgrs.sg.loadLibrary(); } }  //go get the media
         function verifyQueueMatch(rmo) {
+            if(rmo.qname === "iospush") {
+                handlePushMessage(rmo);
+                return false; }  //no corresponding queue
             if(!qs[rmo.qname].q.length) {
                 jt.log("ios.retv no pending mssages in queue " + rmo.qname +
                        ". Ignoring.");
