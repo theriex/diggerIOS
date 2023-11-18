@@ -24,8 +24,10 @@ app.svc = (function () {
                        src + ": " + JSON.stringify(stat)); } }
     return {
         requestStatusUpdate: function (/*contf*/) {
-            mgrs.ios.call("statusSync", deckPaths(), function (stat) {
-                notePlaybackState(stat, "statusSync"); }); },
+            const dps = deckPaths();
+            if(!app.scr.stubbed("statusSync", null, notePlaybackState)) {
+                mgrs.ios.call("statusSync", deckPaths(), function (stat) {
+                    notePlaybackState(stat, "statusSync"); }); } },
         pause: function () {
             mgrs.ios.call("pausePlayback", "", function (stat) {
                 notePlaybackState(stat, "pausePlayback"); }); },
@@ -35,9 +37,11 @@ app.svc = (function () {
         seek: function (ms) {
             mgrs.ios.call("seekToOffset", String(ms), function (stat) {
                 notePlaybackState(stat, "seekToOffset"); }); },
-        playSong: function (/*path*/) {  //need entire queue, not just song
-            mgrs.ios.call("startPlayback", deckPaths(), function (stat) {
-                notePlaybackState(stat, "startPlayback"); }); }
+        playSong: function (path) {  //need entire queue, not just song
+            const dps = deckPaths();
+            if(!app.scr.stubbed("startPlayback", path, notePlaybackState)) {
+                mgrs.ios.call("startPlayback", deckPaths(), function (stat) {
+                    notePlaybackState(stat, "startPlayback"); }); } }
     };  //end mgrs.mp returned functions
     }());
 
@@ -470,7 +474,7 @@ return {
         try {
             return mgrs[mgrname][fname].apply(app.svc, args);
         } catch(e) {
-            console.log("top.dispatch: " + mgrname + "." + fname + " " + e +
+            console.log("svc.dispatch: " + mgrname + "." + fname + " " + e +
                         " " + new Error("stack trace").stack);
         } }
 };  //end of returned functions
