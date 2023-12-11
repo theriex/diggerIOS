@@ -449,7 +449,7 @@ class DiggerQueuedPlayerManager {
         if let qstat = getDiggerQueueState() { //loads from disk if needed
             if(qstat.isEmpty) {
                 dpu.conlog("Replacing empty digger queue state")
-                setDiggerQueue(updq, "playnow")
+                setDiggerQueue(updq, "playnext")
                 return }
             if let nowpi = smpc.nowPlayingItem {
                 let npidx = smpc.indexOfNowPlayingItem
@@ -462,8 +462,8 @@ class DiggerQueuedPlayerManager {
                     setDiggerQueue(updq, "playnow")
                     return }
                 if(!sameSong(nowpi, qstat[npidx])) {
-                    //Probably Digger started while some other music playing.
-                    //Could "playnext", but most likely want new music now.
+                    //Most likely what is playing is not Digger music so start
+                    //or restart playback
                     dpu.conlog("now playing out of sync with app queue")
                     setDiggerQueue(updq, "playnow")
                     return }
