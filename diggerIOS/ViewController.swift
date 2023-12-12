@@ -376,10 +376,19 @@ class DiggerQueuedPlayerManager {
           selector: #selector(noteMPNPIDC),
           name: NSNotification.Name.MPMusicPlayerControllerNowPlayingItemDidChange,
           object: nil)
+        NotificationCenter.default.addObserver(
+          self,
+          selector: #selector(noteAppTerminating),
+          name: UIApplication.willTerminateNotification,
+          object: nil)
     }
 
     @objc func noteMPNPIDC(_ nfn:Notification) {
         songJustChanged()
+    }
+
+    @objc func noteAppTerminating(_ nfn:Notification) {
+        dmh.dmp.pause();
     }
 
     func setCallbackMessageHandler(_ dmhobj:DiggerMessageHandler) {
