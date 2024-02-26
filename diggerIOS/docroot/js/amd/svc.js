@@ -96,6 +96,7 @@ app.svc = (function () {
                 song.ti = dai.title;
                 song.ar = dai.artist;
                 song.ab = dai.album;
+                song.genrejson = JSON.stringify(dai.genre);
                 app.top.dispatch("dbc", "verifySong", song);
                 if(!song.ar) {  //artist required for hub sync
                     setArtistFromPath(song); } }); }

@@ -443,6 +443,7 @@ class DiggerQueuedPlayerManager {
                                  "title": item.title ?? "",
                                  "artist": item.artist ?? "",
                                  "album": item.albumTitle ?? "",
+                                 "genre": item.genre ?? "",
                                  "lp": lpd.ISO8601Format() ]) } } }
         if(caller == "iosdlg") {
             DispatchQueue.main.async {  //needs to run on main thread
