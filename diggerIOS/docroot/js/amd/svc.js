@@ -227,7 +227,8 @@ app.svc = (function () {
             const fname = "hubAcctCall" + endpoint;
             if(app.scr.stubbed(fname, null, contf, errf)) {
                 return; }
-            const param = {"endpoint":"/" + endpoint, method:verb, "data":data};
+            const param = {"endpoint":"/" + endpoint, method:verb,
+                           "data":data || ""};  //Swift needs [String:String]
             mgrs.ios.call(fname, JSON.stringify(param), contf, errf); }
     };  //end mgrs.loc returned functions
     }());
@@ -451,9 +452,11 @@ app.svc = (function () {
         copyToClipboard: function (txt, contf/*, errf*/) {
             mgrs.ios.call("copyToClipboard", txt, contf); },
         tlasupp: function (act) {
-            if(act.id === "ignorefldrsbutton") {
-                return false; }
-            return true; }
+            const unsupp = {
+                "updversionnote":"App Store updates after server",
+                "ignorefldrsbutton":"No music file folders on IOS",
+                "readfilesbutton":"All media queried at app startup"};
+            return (!act.id || !unsupp[act.id]); }
     };  //end mgrs.gen returned functions
     }());
 
