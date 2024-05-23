@@ -42,7 +42,7 @@ var linker = (function () {
             fs.copyFileSync(dfp, hfp);
             console.log("updated " + hfp); }
         else {
-            console.log("up2date " + hfp); }
+            console.log("   ok   " + hfp); }
     }
 
 

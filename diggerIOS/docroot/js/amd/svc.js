@@ -16,12 +16,10 @@ app.svc = (function () {
             const playstate = app.deck.getPlaybackState(true, "paths");
             return JSON.stringify(playstate.qsi); }
         function notePlaybackState (stat, src) {
-            if(stat && stat.path) {
-                app.player.dispatch("mob", "notePlaybackStatus", stat); }
-            else {
+            if(stat) {  //may not have full info on init of player comms
                 src = src || "unknown";
-                jt.log("svc.mp.notePlaybackState ignoring return from " +
-                       src + ": " + JSON.stringify(stat)); } }
+                stat.path = stat.path || "";
+                app.player.dispatch("mob", "notePlaybackStatus", stat); } }
     return {
         requestStatusUpdate: function (/*contf*/) {
             const dps = deckPaths();
@@ -397,8 +395,9 @@ app.svc = (function () {
                 else {
                     mqo.cbf(rmo.res); }
             } catch(e) {
-                jt.log("ios.retv " + (rmo.errmsg? "error" : "success") +
-                       " callback failed: " + e);
+                jt.log("ios.retv " + rmo.qname + " " + rmo.msgid + " " +
+                       rmo.fname + " " +(rmo.errmsg? "error" : "success") +
+                       " callback failed: " + e + "  stack: " + e.stack);
             }
             if(qs[rmo.qname].q.length) {  //process next in queue
                 callIOS(rmo.qname, qs[rmo.qname].q[0]); } }

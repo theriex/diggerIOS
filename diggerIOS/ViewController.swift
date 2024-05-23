@@ -488,9 +488,15 @@ class DiggerQueuedPlayerManager {
     }
 
     func getPlaybackStatus() -> String {
-        var pbstat = "paused"  //By default, show a play button.
-        if(smpc.playbackState == MPMusicPlaybackState.playing) {
+        var pbstat = ""
+        if((smpc.playbackState == MPMusicPlaybackState.playing) ||
+             (smpc.playbackState == MPMusicPlaybackState.interrupted) ||
+             (smpc.playbackState == MPMusicPlaybackState.seekingForward) ||
+             (smpc.playbackState == MPMusicPlaybackState.seekingBackward)) {
             pbstat = "playing" }
+        else if((smpc.playbackState == MPMusicPlaybackState.stopped) ||
+                  (smpc.playbackState == MPMusicPlaybackState.paused)) {
+            pbstat = "paused" }
         if(sleeping) {
             pbstat = "ended" }
         let pbpos = dpu.timeIntervalToMS(smpc.currentPlaybackTime)
