@@ -122,12 +122,12 @@ class DiggerMessageHandler {
         case "getAppVersion":
             return "v\(binfo("CFBundleShortVersionString"))"
         case "readConfig":
-            return self.dpu.readFile("config.json")
+            return self.dpu.readFile("config.json", "xmit")
         case "writeConfig":
             return self.dpu.writeFile("config.json", param)
         case "readDigDat":
             self.dmp.initMediaInfo("readDigDat")
-            return self.dpu.readFile("digdat.json")
+            return self.dpu.readFile("digdat.json", "xmit")
         case "writeDigDat":
             return self.dpu.writeFile("digdat.json", param)
         case "requestMediaRead":
@@ -306,22 +306,24 @@ class DiggerProcessingUtilities {
                                      subdirectory: subdir) {
             //conlog("readAppDocContent \(url)")
             if FileManager.default.fileExists(atPath: url.path) {
-                ret = readFileURL(url) } }
+                ret = readFileURL(url, "xmit") } }
         return ret
     }
 
-    func readFile(_ name:String) -> String {
-        return readFileURL(docDirFileURL(name))
+    func readFile(_ name:String, _ retform:String) -> String {
+        return readFileURL(docDirFileURL(name), retform)
     }
 
-    func readFileURL(_ furl:URL) -> String {
+    func readFileURL(_ furl:URL, _ retform:String) -> String {
         do {
             let fileManager = FileManager.default
             if(!fileManager.fileExists(atPath: furl.path)) {
                 return "" }
             let dc = try Data(contentsOf: furl)
-            let rv = String(data: dc, encoding: .utf8)
-            return xmitEscape(rv!)
+            var rv = String(data: dc, encoding: .utf8)
+            if(retform == "xmit") {  //as opposed to "raw"
+                rv = xmitEscape(rv!) }
+            return rv!
         } catch {
             return "Error - readFile failed"
         }
@@ -388,7 +390,8 @@ class DiggerQueuedPlayerManager {
     }
 
     @objc func noteAppTerminating(_ nfn:Notification) {
-        dmh.dmp.pause();
+        let pb = dmh.dmp.pause()
+        dpu.conlog("noteAppTerminating pause: \(pb)")
     }
 
     func setCallbackMessageHandler(_ dmhobj:DiggerMessageHandler) {
@@ -571,6 +574,63 @@ class DiggerQueuedPlayerManager {
 
     // helper functions
 
+    func writeUpdatedDBO(_ dj:[String:Any]) {
+        //dpu.conlog("writeUpdatedDBO start")
+        do {
+            let resdat = try JSONSerialization.data(
+                 withJSONObject:dj, options: .prettyPrinted)
+            if let ddstr = String(data:resdat, encoding: .utf8) {
+                let _ = self.dpu.writeFile("digdat.json", ddstr)
+                dpu.conlog("writeUpdatedDBO digdat.json complete") }
+            else {
+                dpu.conlog("writeUpdatedDBO Data to String conv failed") }
+        } catch {
+            dpu.conlog("writeUpdatedDBO serialization err: \(error)") }
+    }
+
+    func updatePlayCountFromDBO(_ path:String, _ dj:[String:Any]) {
+        //dpu.conlog("updPCFD accessing songs")
+        if let sd = dj["songs"] as? [String:Any] {
+            dpu.conlog("updPCFD song path: \(path)")
+            if var song = sd[path] as? [String:Any] {
+                var title = "UNKNOWN"
+                if let ti = song["ti"] as? String {
+                    title = ti }
+                dpu.conlog("updPCFD updating song: \(title)")
+                var playcount = 0
+                if let pc = song["pc"] as? Int {
+                    dpu.conlog("updPCFD retrieved pc: \(pc)")
+                    playcount = pc }
+                playcount += 1
+                song["pc"] = playcount
+                dpu.conlog("updPCFD playcount: \(playcount)")
+                let tfmt = ISO8601DateFormatter()
+                let lastplayed = tfmt.string(from:Date.now)
+                song["lp"] = lastplayed
+                dpu.conlog("updPCFD lastplayed: \(lastplayed)")
+                writeUpdatedDBO(dj) }
+            else {
+                dpu.conlog("updPCFD song not found") } }
+        else {
+            dpu.conlog("updPCFD songs field not in dictionary") }
+    }
+
+    func updatePlayCount(_ updq:[MPMediaItem]) {
+        //dpu.conlog("updatePlayCount called updq.count: \(updq.count)")
+        if(updq.count == 0) { return }
+        let pathurl = updq[0].assetURL!
+        let path = pathurl.absoluteString  //matches diggerhub path value
+        let jsonstr = self.dpu.readFile("digdat.json", "raw")
+        //dpu.conlog("updatePlayCount jsonstr: \(jsonstr.prefix(200))")
+        if let jdat = jsonstr.data(using: .utf8) {
+            do {
+                if let dj = try JSONSerialization.jsonObject(
+                     with:jdat, options: .mutableContainers) as? [String:Any] {
+                    updatePlayCountFromDBO(path, dj) }
+            } catch {
+                dpu.conlog("updatePlayCount JSON deserialize err: \(error)") } }
+    }
+
     func songJustChanged() {
         if(sleepOffset <= 0) {
             if(!sleeping) {
@@ -582,9 +642,13 @@ class DiggerQueuedPlayerManager {
             if(queueResetFlag) {
                 queueResetFlag = false
                 if let updq = getDiggerQueueState() {
-                    //need to remove the song that just ended
-                    let cdr = Array(updq[1 ..< updq.endIndex])
-                    setDiggerQueue(cdr, "playnow") }
+                    if(updq.count > 0) {
+                        //need to remove the song that just ended
+                        let cdr = Array(updq[1 ..< updq.endIndex])
+                        updatePlayCount(cdr)
+                        setDiggerQueue(cdr, "playnow") }
+                    else {
+                        dpu.conlog("queueResetFlag cleared, empty updq") } }
                 else {
                     dpu.conlog("queueResetFlag cleared but no updq") } } }
     }
@@ -625,7 +689,7 @@ class DiggerQueuedPlayerManager {
 
     func getDiggerQueueState() -> [MPMediaItem]? {
         if(qsta == nil) {  //restore if available if app restarted
-            let qtxt = dpu.readFile("digqstat.json")
+            let qtxt = dpu.readFile("digqstat.json", "raw")
             if(!qtxt.hasPrefix("Error ")) {
                 qsta = pathsToMIA(qtxt) }
             if(qsta == nil) {
