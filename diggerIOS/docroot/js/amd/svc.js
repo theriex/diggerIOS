@@ -12,10 +12,14 @@ app.svc = (function () {
 
     //Media Playback manager handles transport and playback calls
     mgrs.mp = (function () {
+        const sleepstat = {};
         function deckPaths () {
             const playstate = app.deck.getPlaybackState(true, "paths");
             return JSON.stringify(playstate.qsi); }
         function notePlaybackState (stat, src) {
+            if(sleepstat.cbf) {
+                sleepstat.cbf(sleepstat.cmd);
+                sleepstat.cbf = null; }
             if(stat) {  //may not have full info on init of player comms
                 src = src || "unknown";
                 stat.path = stat.path || "";
@@ -35,6 +39,10 @@ app.svc = (function () {
         seek: function (ms) {
             mgrs.ios.call("seekToOffset", String(ms), function (stat) {
                 notePlaybackState(stat, "seekToOffset"); }); },
+        sleep: function (count, cmd, cbf) {
+            sleepstat.count = count;  //rcv appropriately truncated|restored
+            sleepstat.cmd = cmd;      //queue on next status update
+            sleepstat.cbf = cbf; },
         playSong: function (path) {  //need entire queue, not just song
             const dps = deckPaths();
             if(!app.scr.stubbed("startPlayback", path, notePlaybackState)) {
@@ -384,7 +392,7 @@ app.svc = (function () {
                     callIOS(qname, qs[qname].q[0]); } } },
         retv: function (mstr) {
             const rmo = parseMessageText(mstr);
-            if(!verifyQueueMatch(rmo)) {
+            if(!verifyQueueMatch(rmo)) {  //failure message logged
                 return; }
             if(typeof rmo.res === "string" && rmo.res.startsWith("Error - ")) {
                 parseErrorText(rmo); }
