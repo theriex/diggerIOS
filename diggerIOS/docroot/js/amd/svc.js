@@ -400,8 +400,8 @@ app.svc = (function () {
             try {
                 if(rmo.errmsg) {
                     mqo.errf(rmo.errcode, rmo.errmsg); }
-                else {
-                    mqo.cbf(rmo.res); }
+                else {  //send a modifiable deep copy of results for use by cbf
+                    mqo.cbf(JSON.parse(JSON.stringify(rmo.res))); }
             } catch(e) {
                 jt.log("ios.retv " + rmo.qname + " " + rmo.msgid + " " +
                        rmo.fname + " " +(rmo.errmsg? "error" : "success") +
