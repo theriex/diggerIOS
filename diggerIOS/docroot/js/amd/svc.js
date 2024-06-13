@@ -16,7 +16,10 @@ app.svc = (function () {
         function deckPaths () {
             const playstate = app.deck.getPlaybackState(true, "paths");
             return JSON.stringify(playstate.qsi); }
-        function notePlaybackState (stat, src) {
+        function notePlaybackState (readonlystat, src) {
+            var stat = "";
+            if(readonlystat) {
+                stat = JSON.parse(JSON.stringify(readonlystat)); }
             if(sleepstat.cbf) {
                 sleepstat.cbf(sleepstat.cmd);
                 sleepstat.cbf = null; }
@@ -26,15 +29,15 @@ app.svc = (function () {
                 app.player.dispatch("mob", "notePlaybackStatus", stat); } }
     return {
         requestStatusUpdate: function (/*contf*/) {
-            const dps = deckPaths();
             if(!app.scr.stubbed("statusSync", null, notePlaybackState)) {
                 mgrs.ios.call("statusSync", deckPaths(), function (stat) {
                     notePlaybackState(stat, "statusSync"); }); } },
         pause: function () {
             mgrs.ios.call("pausePlayback", "", function (stat) {
                 notePlaybackState(stat, "pausePlayback"); }); },
-        resume: function () {
-            mgrs.ios.call("resumePlayback", "", function (stat) {
+        resume: function (unsleep) {
+            unsleep = unsleep || "";
+            mgrs.ios.call("resumePlayback", unsleep, function (stat) {
                 notePlaybackState(stat, "resumePlayback"); }); },
         seek: function (ms) {
             mgrs.ios.call("seekToOffset", String(ms), function (stat) {
@@ -44,7 +47,6 @@ app.svc = (function () {
             sleepstat.cmd = cmd;      //queue on next status update
             sleepstat.cbf = cbf; },
         playSong: function (path) {  //need entire queue, not just song
-            const dps = deckPaths();
             if(!app.scr.stubbed("startPlayback", path, notePlaybackState)) {
                 mgrs.ios.call("startPlayback", deckPaths(), function (stat) {
                     notePlaybackState(stat, "startPlayback"); }); } }

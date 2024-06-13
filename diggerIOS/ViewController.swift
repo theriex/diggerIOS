@@ -137,11 +137,11 @@ class DiggerMessageHandler {
             return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
         case "statusSync":
             self.dmp.synchronizePlaybackQueue(param)
-            return self.dmp.getPlaybackStatus()
+            return self.dmp.getPlaybackStatus("statusSync")
         case "pausePlayback":
             return self.dmp.pause()
         case "resumePlayback":
-            return self.dmp.resume()
+            return self.dmp.resume(param)
         case "seekToOffset":
             return self.dmp.seek(param)
         case "startPlayback":
@@ -357,22 +357,40 @@ class DiggerProcessingUtilities {
 
 //////////////////////////////////////////////////////////////////////
 //
-// Wrapper to provide Digger music playback functionality
+// Wrapper to provide Digger music playback functionality.
+//
+// Simple transport calls (pause, resume, seek) and data actions (read/write
+// digdat, requestMediaRead, requestAudioSummary, fetchAlbum) are playback
+// queue state independent.  Queue modification actions (startPlayback,
+// statusSync) change the queue state.  iOS Notification callback handlers
+// depend on the playback queue state, and must ignore duplicate notices.
+//
+// Queue state change calls:
+//   startPlayback: Replace playing queue
+//   synchronizePlaybackQueue: depends on updq parameter contents
+//     - empty: no action  (initial playback status request)
+//     - 1st song playing: Replace queue with remainder after song finishes
+//     - 1st song not playing: Replace playing queue
+//
+// Sleep is indicated by the DIGGERSLEEPMARKER song at the end of the queue
+// which sets the sleepAtEnd flag.  The flag is unset by startPlayback,
+// resume("unsleep"), or songJustChanged noting playback has been resumed.
 //
 //////////////////////////////////////////////////////////////////////
 class DiggerQueuedPlayerManager {
     let dpu = DiggerProcessingUtilities()
     let smpc = MPMusicPlayerController.systemMusicPlayer
-    var qsta:[MPMediaItem]? = nil  //current queue state reference
-    var sleepOffset = 1000
-    var sleeping = false
+    var mibp = [String: MPMediaItem]()   //Media items by path
+    var dais = [[String: String]]()      //Digger Audio Items
+    var medchk = "unchecked"             //media permissioning dlg stat
+    var dmh: DiggerMessageHandler!       //back ref for app return values
+    // playback queue state management
+    var qpcmd = ""  //Queue processing command from app call thread
+    var sleepAtEnd = false
+    var spqp = ""  //synchronizePlaybackQueue last processed paths
+    var qsta:[MPMediaItem]? = nil  //current queue state array reference
     var queueResetFlag = false
-    var latestStatusItemPath = ""
     var songChangeNoticePath = ""
-    var mibp = [String: MPMediaItem]()  //Media items by path
-    var dais = [[String: String]]()  //Digger Audio Items
-    var medchk = "unchecked"
-    var dmh: DiggerMessageHandler!
 
     init() {
         NotificationCenter.default.addObserver(
@@ -456,125 +474,107 @@ class DiggerQueuedPlayerManager {
                                        "") } }
     }
 
+    @discardableResult
+    func setQueueProcessingCommand(_ cmd:String, _ prio:Bool) -> Bool {
+        if(qpcmd.isEmpty || prio) {
+            qpcmd = cmd
+            dpu.conlog("setQueueProcessingCommand: \(cmd)")
+            return true }
+        return false
+    }
+    func clearQueueProcessingCommand(_ cmd:String) {
+        if(qpcmd == cmd) {
+            qpcmd = ""
+            dpu.conlog("clearQueueProcessingCommand: \(cmd)") }
+    }
+
     //The systemMusicPlayer is shared, so its queue can be changed any time
     //by any app.  Digger "startPlayback" sends an full queue of ~200 song
     //paths (or N album song paths) which is saved to digqstat.json.  The
     //update queue parameter given here will hard replace the existing queue
-    //if there are no songs left in the existing queue to play.  Otherwise
-    //it will continue to play what it still has left.  The first song in
-    //the queue is the one currently playing.  An empty updq is ignored.  An
-    //empty queue happens at app launch when the app does an initial status
-    //check to see what is currently playing.
+    //if the currently playing song does not match, otherwise it will
+    //replace the queue after the currently playing song finishes to avoid
+    //restarting playback.
     func synchronizePlaybackQueue(_ paths:String) {
+        if(paths == spqp) {
+            dpu.conlog("syncPQ no change in queue data sent")
+            return }
+        spqp = paths  //note to avoid duplicate calls
         let updq = pathsToMIA(paths)
         if(updq.isEmpty) {
             dpu.conlog("syncPQ ignoring call with empty updq")
             return }
-        let srt = queuedCommonSongsRemainingToPlay(updq)
-        if(srt > 1) {  //now playing common, 1+ common digq/updq songs after
-            dpu.conlog("syncPQ \(srt) queued songs left, continuing playback") }
-        else if(srt == 1) {  //currently playing song in common
-            //if updq.count > 1 then previous check shows hard reset needed
-            if((updq.count == 1) && existingQueueEquivalent(updq)) {
-                dpu.conlog("syncPQ no change to existing queue") }
-            else {  //change queue after current song finishes
-                dpu.conlog("syncPQ resetting queue after current song ends")
-                setDiggerQueue(updq, "playnext") } }
-        else {  //srt == 0, nothing in common, hard reset queue and play
-            dpu.conlog("syncPQ replacing queue with update queue")
+        if(!setQueueProcessingCommand("synchronizePlaybackQueue", false)) {
+            dpu.conlog("syncPQ yielding to \(qpcmd), no queue changes.")
+            return }
+        var firstSongCurrentlyPlaying = false
+        if let nowpi = smpc.nowPlayingItem {
+            if let url = nowpi.assetURL {  //succeeds if local music file
+                if let q0u = updq[0].assetURL {  //always succeeds
+                    if(url.absoluteString == q0u.absoluteString) {
+                        firstSongCurrentlyPlaying = true } } } }
+        if(firstSongCurrentlyPlaying) {
+            setDiggerQueue(updq, "playnext") }
+        else {  //replace currently playing song with Digger songs
             setDiggerQueue(updq, "playnow") }
+        clearQueueProcessingCommand("synchronizePlaybackQueue")
     }
 
-    //Unless overwritten by another app, the systemMusicPlayer queue (sysq)
-    //is equivalent to the digger queue (digq) it was last set with.  The
-    //sysq is opaque, so use indexOfNowPlayingItem to test nowPlayingItem
-    //against the same index in digq.  If NOT the same song, then sysq has
-    //changed, otherwise proceed on the hope that digq and sysq have the
-    //same content.  Treating digq as equivalent to sysq, count remaining
-    //songs in digq that are still in updq.  The currently playing song may
-    //be in common or not.
-    func queuedCommonSongsRemainingToPlay(_ updq:[MPMediaItem]) -> Int {
-        if let digq = getDiggerQueueState() { //loads from disk if needed
-            if(digq.isEmpty) {
-                dpu.conlog("qSR2P digq empty")
-                return 0 }
-            if let nowpi = smpc.nowPlayingItem {
-                let npidx = smpc.indexOfNowPlayingItem
-                if(npidx == NSNotFound) {  //unknown how this can happen
-                    dpu.conlog("qSR2P no index for now playing")
-                    return 0 }
-                if(npidx < 0 || digq.count <= npidx) {
-                    dpu.conlog("qSR2P npidx \(npidx) outside of digq range")
-                    return 0 }
-                if(!sameSong(nowpi, digq[npidx])) {
-                    dpu.conlog("qSR2P now playing out of sync with app queue")
-                    return 0 }
-                if(updq.isEmpty) {  //open status query with no queue update
-                    dpu.conlog("qSR2P empty updq, returning remaining")
-                    return (digq.count - npidx) }
-                var cntidx = 0  //now playing song is updq[0] (if common)
-                while((cntidx + npidx < digq.count) &&
-                        (cntidx < updq.count) &&
-                        (sameSong(digq[npidx + cntidx], updq[cntidx]))) {
-                    cntidx += 1 }
-                dpu.conlog("qSR2P \(cntidx) digq songs remaining")
-                return cntidx }
-            dpu.conlog("qSR2P no smpc.nowPlayingItem")
-            return 0 }
-        dpu.conlog("qSR2P no digger queue")
-        return 0  //no digger queue means no queued songs left
+    struct NowPlayingInfo {
+        var duration = 0
+        var path = ""
+    }
+    func nowPlayingInfo() -> NowPlayingInfo {
+        var npi = NowPlayingInfo()
+        if let item = smpc.nowPlayingItem {
+            npi.duration = dpu.timeIntervalToMS(item.playbackDuration)
+            if let url = item.assetURL {
+                npi.path = url.absoluteString } }
+        return npi
     }
 
-    func existingQueueEquivalent(_ updq:[MPMediaItem]) -> Bool {
-        if let digq = getDiggerQueueState() { //loads from disk if needed
-            if(digq.count != updq.count) {
-                return false }
-            var ccnt = 0
-            while(ccnt < updq.count) {
-                if(!sameSong(digq[ccnt], updq[ccnt])) {
-                    return false }
-                ccnt += 1 }
-            return true }
-        return false
-    }
-
-    func getPlaybackStatus() -> String {
+    func getPlaybackStatus(_ caller:String) -> String {
+        let pbpos = dpu.timeIntervalToMS(smpc.currentPlaybackTime)
+        let npi = nowPlayingInfo()
         var pbstat = "unknown"
         if((smpc.playbackState == MPMusicPlaybackState.playing) ||
              (smpc.playbackState == MPMusicPlaybackState.interrupted) ||
              (smpc.playbackState == MPMusicPlaybackState.seekingForward) ||
              (smpc.playbackState == MPMusicPlaybackState.seekingBackward)) {
             pbstat = "playing" }
-        else if((smpc.playbackState == MPMusicPlaybackState.stopped) ||
-                  (smpc.playbackState == MPMusicPlaybackState.paused)) {
-            pbstat = "paused" }
-        if(sleeping) {
-            pbstat = "ended" }
-        let pbpos = dpu.timeIntervalToMS(smpc.currentPlaybackTime)
-        var itemDuration = 0
-        if let npi = smpc.nowPlayingItem {
-            itemDuration = dpu.timeIntervalToMS(npi.playbackDuration)
-            if let url = npi.assetURL {
-                latestStatusItemPath = url.absoluteString } }
+        else if(smpc.playbackState == MPMusicPlaybackState.stopped) {
+            if(sleepAtEnd) {
+                pbstat = "ended" }  //triggers resume playback display
+            else {
+                pbstat = "paused" } }
+        else if(smpc.playbackState == MPMusicPlaybackState.paused) {
+            if(sleepAtEnd &&
+                 (pbpos < 2000 || (npi.duration > 0 &&
+                                   npi.duration - pbpos < 2000))) {
+                pbstat = "ended" }
+            else {
+                pbstat = "paused" } }
         //Not worth declaring an object for dpu.toJSONString to understand
-        let statstr = "{\"state\":\"\(pbstat)\",\"pos\":\(pbpos),\"dur\":\(itemDuration),\"path\":\"\(latestStatusItemPath)\"}"
-        dpu.conlog("getPlaybackStatus: \(statstr)")
+        let statstr = "{\"state\":\"\(pbstat)\",\"pos\":\(pbpos),\"dur\":\(npi.duration),\"path\":\"\(npi.path)\"}"
+        dpu.conlog("getPlaybackStatus (\(caller)): \(statstr)")
         return statstr
     }
 
     func pause() -> String {
         smpc.pause()
-        return getPlaybackStatus()
+        return getPlaybackStatus("pause")
     }
 
-    func resume() -> String {
+    func resume(_ unsleep:String) -> String {
+        if(unsleep == "unsleep") {
+            sleepAtEnd = false }
         smpc.play()
-        return getPlaybackStatus()
+        return getPlaybackStatus("resume")
     }        
 
     func seek(_ mstr:String) -> String {
         smpc.currentPlaybackTime = dpu.timeIntervalFromMStr(mstr)
-        return getPlaybackStatus()
+        return getPlaybackStatus("seek")
     }
 
     func consoleLogMediaQueue(_ queue:[MPMediaItem]) {
@@ -583,14 +583,19 @@ class DiggerQueuedPlayerManager {
             dpu.conlog("  \(mi.title ?? "NoTitleFound")") }
     }
 
+    //An explicit call to play takes precedence over all other queue operations.
     func startPlayback(_ param:String) -> String {
-        dpu.conlog("Starting playback")
         let updq = pathsToMIA(param)
-        consoleLogMediaQueue(updq)
-        if(updq.isEmpty) {
-            return "Error - Empty queue given, startPlayback call ignored" }
-        setDiggerQueue(updq, "playnow")
-        return "prepared"
+        var retval = "Error - Empty queue given, startPlayback call ignored"
+        if(!updq.isEmpty) {
+            setQueueProcessingCommand("startPlayback", true)
+            dpu.conlog("startPlayback sleepAtEnd:false")
+            sleepAtEnd = false
+            consoleLogMediaQueue(updq)
+            setDiggerQueue(updq, "playnow")
+            clearQueueProcessingCommand("startPlayback")
+            retval = "prepared" }
+        return retval
     }
 
     func getAlbumSongs(_ nps:String) -> String {
@@ -618,8 +623,6 @@ class DiggerQueuedPlayerManager {
             dpu.conlog("getAlbum songs, no data for now playing song") }
         return rets
     }
-
-    // helper functions
 
     func writeUpdatedDBO(_ dj:[String:Any]) {
         //dpu.conlog("writeUpdatedDBO start")
@@ -678,47 +681,43 @@ class DiggerQueuedPlayerManager {
                 dpu.conlog("updatePlayCount JSON deserialize err: \(error)") } }
     }
 
-    //An empty queue does not necessarily mean sleep.  Could be no more
-    //songs on deck.  This function may be called repeatedly in quick
-    //succession for no good reason.  smpc.nowPlayingItem may not be well
-    //defined or reliable of repeat calls.
+    //This function is called repeatedly in quick succession for no good
+    //reason.  smpc.nowPlayingItem may not be well defined or reliable on
+    //repeat calls.
     func songJustChanged() {
-        dpu.conlog("songJustChanged sleepOffset: \(sleepOffset), queueResetFlag: \(queueResetFlag), latestStatusItemPath: \(latestStatusItemPath)")
-        if(songChangeNoticePath == latestStatusItemPath) {
+        if(!qpcmd.isEmpty) {
+            dpu.conlog("songJustChanged ignoring call within \(qpcmd)")
+            return }
+        let npi = nowPlayingInfo()
+        if(npi.path == songChangeNoticePath) {
             dpu.conlog("songJustChanged dupe notice \(songChangeNoticePath)")
             return }
-        songChangeNoticePath = latestStatusItemPath
+        songChangeNoticePath = npi.path  //note notification handled
+        dpu.conlog("songJustChanged \(songChangeNoticePath)")
         if(queueResetFlag) {
-            smpc.pause()  //might be end of album or songs, play after reset
+            dpu.conlog("songJustChanges resetting queue")
             queueResetFlag = false
-            sleepOffset = 0
+            smpc.pause()  //might be end of album or songs, play after reset
             if let updq = getDiggerQueueState() {
                 if(updq.count > 1) {  //currently playing song first in queue
                     //need to remove the song that just ended
                     let cdr = Array(updq[1 ..< updq.endIndex])
-                    updatePlayCount(cdr)  //setDiggerQueue updates sleepOffset
+                    updatePlayCount(cdr)
                     setDiggerQueue(cdr, "playnow") }
-                else {
-                    dpu.conlog("songJustChanged queue reset empty") } }
+                else {  //no more digger songs to play
+                    dpu.conlog("songJustChanged no songs left in updq")
+                    smpc.stop() } }  //smpc.playbackState: paused
             else {
-                dpu.conlog("songJustChanged queue reset no updq") } }
-        else {  //no queue reset, check and update sleepOffset\
-            if(sleepOffset > 0) {  //no reset, and more songs to go
-                sleepOffset -= 1 }
-            else {  //sleepOffset <= 0
-                if(!sleeping) {
-                    sleeping = true
-                    smpc.stop() } } }  //"stopped" == sleeping
+                dpu.conlog("songJustChanged queue reset no updq")
+                smpc.stop() } }
     }
 
     func resetPlayerQueueAndStartPlayback(_ updq:[MPMediaItem]) {
         smpc.stop()  //MPMediaPlayback.  Supposedly clears the queue.
         smpc.nowPlayingItem = nil  //clear state
-        sleepOffset = updq.count
-        sleeping = false
         queueResetFlag = false
+        spqp = ""
         let logpre = "resetPlayerQueueAndStartPlayback"
-        dpu.conlog("\(logpre) sleepOffset: \(sleepOffset)")
         if(updq.isEmpty) {
             dpu.conlog("\(logpre) updq empty, nothing to play")
             return }
@@ -776,6 +775,9 @@ class DiggerQueuedPlayerManager {
                      options: .mutableContainers) as? [String] {
                     //might get a path with no corresponding local media item
                     for path in psa {
+                        if(path == "DIGGERSLEEPMARKER") {
+                            dpu.conlog("pathsToMIA sleepAtEnd:true")
+                            sleepAtEnd = true }
                         if let mi = mibp[path] {
                             //dpu.conlog("pathsToMIA \(mi.title ?? "NoTitle")")
                             mia.append(mi) } } }
@@ -791,53 +793,4 @@ class DiggerQueuedPlayerManager {
         return miqd as MPMusicPlayerQueueDescriptor
     }
 
-    //It's remotely possible the paths could change while the app is
-    //running, but that would mess up finding an updated song on return from
-    //hubsync so just as well to use the path as the comparison here.  Only
-    //allowed to play locally available files.
-    func sameSong(_ mif:MPMediaItem?, _ mib:MPMediaItem?) -> Bool {
-        if((mif == nil) || (mib == nil)) {
-            return false }
-        if(mif!.assetURL == mib!.assetURL) {
-            return true }
-        return false
-    }
-
-    //with qstat and updq both available, check no changes and
-    //append any additional songs given.
-    func syncQueueWithUpdates(_ qstat:[MPMediaItem], _ updq:[MPMediaItem],
-                              _ nowpi:MPMediaItem, _ npidx:Int) {
-        if let upidx = updq.firstIndex(where: {sameSong($0, nowpi)}) {
-            var offset = 0
-            while(((npidx + offset) < qstat.count) &&
-                  ((upidx + offset) < updq.count)) {
-                if(!sameSong(qstat[npidx + offset], updq[upidx + offset])) {
-                    dpu.conlog("syncQueueWithUpdates differs offset \(offset)")
-                    dpu.conlog("   qstat: \(qstat[npidx + offset].assetURL!)")
-                    dpu.conlog("    updq: \(updq[upidx + offset].assetURL!)")
-                    setDiggerQueue(updq, "playnext")
-                    return }
-                offset += 1 }
-            if((npidx + offset) < qstat.count) {
-                //update queue was shorter e.g. sleep or additional filtering
-                dpu.conlog("updq shorter (\(npidx + offset) < \(qstat.count))")
-                sleepOffset = npidx + offset - 1 }
-            else if((upidx + offset) >= updq.count) { //queues were same length
-                dpu.conlog("playback queue up to date, \(qstat.count) items") }
-            else {  //queues match, append additional update items
-                dpu.conlog("appending additional songs to playback queue")
-                var newsongs = [MPMediaItem]()
-                while((upidx + offset) < updq.count) {
-                    newsongs.append(updq[upidx + offset])
-                    sleepOffset += 1
-                    offset += 1 }
-                smpc.append(miaToMIQD(newsongs))
-                let merged = qstat + newsongs
-                saveDiggerQueueState(merged) } }
-        else if(updq.count <= 1 && sleepOffset <= 0) {
-            dpu.conlog("syncQueueWithUpdates noted sleep state") }
-        else {  //replace queue, leave now playing song.
-            dpu.conlog("syncQueueWithUpdates now playing was not in queue")
-            setDiggerQueue(updq, "playnext") }
-    }
 }
