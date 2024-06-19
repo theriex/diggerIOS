@@ -689,6 +689,9 @@ class DiggerQueuedPlayerManager {
             dpu.conlog("songJustChanged ignoring call within \(qpcmd)")
             return }
         let npi = nowPlayingInfo()
+        if(npi.path.isEmpty) {
+            dpu.conlog("songJustChanged ignoring call with empty npi.path")
+            return }
         if(npi.path == songChangeNoticePath) {
             dpu.conlog("songJustChanged dupe notice \(songChangeNoticePath)")
             return }

@@ -393,12 +393,13 @@ app.svc = (function () {
                 if(cruft) {  //restart the queue
                     callIOS(qname, qs[qname].q[0]); } } },
         retv: function (mstr) {
+            var mqo = null;
             const rmo = parseMessageText(mstr);
             if(!verifyQueueMatch(rmo)) {  //failure message logged
                 return; }
             if(typeof rmo.res === "string" && rmo.res.startsWith("Error - ")) {
                 parseErrorText(rmo); }
-            const mqo = qs[rmo.qname].q.shift();
+            mqo = qs[rmo.qname].q.shift();
             try {
                 if(rmo.errmsg) {
                     mqo.errf(rmo.errcode, rmo.errmsg); }
