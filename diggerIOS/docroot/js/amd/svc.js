@@ -16,14 +16,11 @@ app.svc = (function () {
         function deckPaths () {
             const playstate = app.deck.getPlaybackState(true, "paths");
             return JSON.stringify(playstate.qsi); }
-        function notePlaybackState (readonlystat, src) {
-            var stat = "";
-            if(readonlystat) {
-                stat = JSON.parse(JSON.stringify(readonlystat)); }
+        function notePlaybackState (stat, src) {
             if(sleepstat.cbf) {
                 sleepstat.cbf(sleepstat.cmd);
                 sleepstat.cbf = null; }
-            if(stat) {  //may not have full info on init of player comms
+            if(stat && typeof stat === "object") {  //might be incomplete
                 src = src || "unknown";
                 stat.path = stat.path || "";
                 app.player.dispatch("mob", "notePlaybackStatus", stat); } }
