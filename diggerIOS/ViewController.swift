@@ -391,6 +391,8 @@ class DiggerQueuedPlayerManager {
     var spqp = ""  //synchronizePlaybackQueue last processed paths
     var qsta:[MPMediaItem]? = nil  //current queue state array reference
     var queueResetFlag = false
+    var playingLastSongInQueue = false
+    var lastQueuedSongPath = ""
     var songChangeNoticePath = ""
 
     init() {
@@ -687,8 +689,23 @@ class DiggerQueuedPlayerManager {
     }
 
     //This function is called repeatedly in quick succession for no good
-    //reason.  smpc.nowPlayingItem may not be well defined or reliable on
-    //repeat calls.
+    //reason.  smpc.nowPlayingItem may not be well defined, and values from
+    //smpc may not be reliable or consistent across repeat calls.  The
+    //system queue is a shared resource that may have been altered by any
+    //other app between when Digger last set the queue and this function
+    //call.  The last understood Digger queue state is saved, but may not
+    //match the current system queue state.  The system queue is opaque, so
+    //merge is not possible beyond the currently playing item.
+    //
+    //When this function is called, the previous song has finished playing
+    //and the next song is either already playing or about to play.  If the
+    //previous song was the last in the queue, it is important to call pause
+    //as quickly as possible to avoid playing any more milliseconds of
+    //whatever media the system found available to play next.  You don't
+    //want to hear a half second of something else after finishing the
+    //albume.  If the previous song was NOT the last song in the queue, then
+    //calling pause or stop will cause a stutter restart of song playback as
+    //the queue resets.
     func songJustChanged() {
         if(!qpcmd.isEmpty) {
             dpu.conlog("songJustChanged ignoring call within \(qpcmd)")
@@ -705,7 +722,10 @@ class DiggerQueuedPlayerManager {
         if(queueResetFlag) {
             dpu.conlog("songJustChanged resetting queue")
             queueResetFlag = false
-            smpc.pause()  //might be end of album or songs, play after reset
+            if(playingLastSongInQueue) {  //end of album or done queued songs
+                dpu.conlog("songJustChanged at end, pause playback")
+                playingLastSongInQueue = false
+                smpc.pause() }            //don't overrun into some other music
             if let updq = getDiggerQueueState() {
                 if(updq.count > 1) {  //currently playing song first in queue
                     //need to remove the song that just ended
@@ -718,11 +738,42 @@ class DiggerQueuedPlayerManager {
             else {
                 dpu.conlog("songJustChanged queue reset no updq")
                 smpc.stop() } }
+        else {  //not resetting queue
+            //npi.path.isEmpty already handled
+            //dupe notice for path already handled
+            if(!lastQueuedSongPath.isEmpty && npi.path == lastQueuedSongPath) {
+                lastQueuedSongPath = ""
+                playingLastSongInQueue = true } }
     }
 
+
+    //Calling MPMediaPlayback.stop by some earlier reference supposedly
+    //clears the queue.  If what is playing does not match what should be
+    //playing, then calling stop is a good idea since we are about to play
+    //something else.  Otherwise, it could lead to stutter where the current
+    //song is interrupted and then restarted.
+    func needToStartPlayback(_ updq:[MPMediaItem]) -> Bool {
+        if(updq.isEmpty) {  //nothing to play next but already paused
+            dpu.conlog("empty updq, already paused, no need to stop")
+            return false }
+        let npi = nowPlayingInfo()
+        if(npi.path.isEmpty) {
+            dpu.conlog("no path for now playing song. stopping playback")
+            smpc.stop()  //nothing playing so may as well call stop
+            return false }
+        let fqp = updq[0].assetURL!.absoluteString   //first queue elem path
+        if(npi.path != fqp) {
+            dpu.conlog("npi.path \(npi.path) != fqp \(fqp). stopping playback")
+            smpc.stop()  //switching to a different song
+            return true }  //need to start playback
+        dpu.conlog("Playing current song, not calling stop")
+        return false
+    }
+
+
     func resetPlayerQueueAndStartPlayback(_ updq:[MPMediaItem]) {
-        smpc.stop()  //MPMediaPlayback.  Supposedly clears the queue.
-        smpc.nowPlayingItem = nil  //clear state
+        let n2sp = needToStartPlayback(updq)
+        //smpc.nowPlayingItem = nil  //doesn't help clear state, causes errors
         queueResetFlag = false
         //spqp = ""  do NOT reset or syncPQ will repeat the same queue
         let logpre = "resetPlayerQueueAndStartPlayback"
@@ -731,6 +782,9 @@ class DiggerQueuedPlayerManager {
             return }
         dpu.conlog("\(logpre) calling smpc.setQueue")
         smpc.setQueue(with: miaToMIQD(updq))  //MPMusicPlayerController
+        if(!n2sp) {
+            dpu.conlog("\(logpre) already playing, skipping prepareToPlay")
+            return }
         dpu.conlog("\(logpre) calling smpc.prepareToPlay")
         smpc.prepareToPlay(  //must call for queue updates to take effect
           completionHandler: { (err) in
@@ -796,6 +850,7 @@ class DiggerQueuedPlayerManager {
             } catch {
                 dpu.conlog("pathsToMIA failed: \(error)")
             } }
+        lastQueuedSongPath = mrsp
         return mia
     }
 
