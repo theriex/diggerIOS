@@ -1,14 +1,11 @@
-/*global app, jt, Android, console */
+/*global app, jt, Android */
 /*jslint browser, white, long, unordered */
-/*global console */
 
 //Server communications for IOS platform
 app.svc = (function () {
     "use strict";
 
     var mgrs = {};  //general container for managers
-    const clg = console.log;
-
 
     //Media Playback manager handles transport and playback calls
     mgrs.mp = (function () {
@@ -183,7 +180,7 @@ app.svc = (function () {
             const datstr = JSON.stringify(dbo, null, 2);
             mgrs.ios.call("writeDigDat", datstr, cbf); },
         saveSongs: function (songs, contf/*, errf*/) {
-            var upds = [];
+            var upds = [];  //actual dbo.songs to provide to contf
             songs.forEach(function (song) {
                 app.copyUpdatedSongData(dbo.songs[song.path], song);
                 upds.push(dbo.songs[song.path]); });
@@ -201,7 +198,7 @@ app.svc = (function () {
             const qdat = JSON.stringify({ar:np.ar, ab:np.ab});
             mgrs.ios.call("fetchAlbum", qdat, function (paths) {
                 if(!paths || !paths.length) {  //should at least find curr song
-                    clg("No album song paths returned, synthesizing");
+                    jt.log("No album song paths returned, synthesizing");
                     paths = synthesizeAlbumPaths(np); }
                 const songs = app.svc.songs();
                 const abs = paths.map((path) => songs[path]);
@@ -485,8 +482,8 @@ return {
         try {
             return mgrs[mgrname][fname].apply(app.svc, args);
         } catch(e) {
-            console.log("svc.dispatch: " + mgrname + "." + fname + " " + e +
-                        " " + new Error("stack trace").stack);
+            jt.log("svc.dispatch: " + mgrname + "." + fname + " " + e +
+                   " " + new Error("stack trace").stack);
         } }
 };  //end of returned functions
 }());
