@@ -28,10 +28,11 @@ app.svc = (function () {
                     notePlaybackState(stat, "statusSync"); }); } },
         pause: function () {
             mgrs.ios.call("pausePlayback", "", function (stat) {
+                stat.state = "paused";  //actual state change lags behind call
                 notePlaybackState(stat, "pausePlayback"); }); },
-        resume: function (unsleep) {
-            unsleep = unsleep || "";
-            mgrs.ios.call("resumePlayback", unsleep, function (stat) {
+        resume: function () {
+            mgrs.ios.call("resumePlayback", "", function (stat) {
+                stat.state = "playing";  //actual state change lags behind call
                 notePlaybackState(stat, "resumePlayback"); }); },
         seek: function (ms) {
             mgrs.ios.call("seekToOffset", String(ms), function (stat) {
@@ -39,7 +40,11 @@ app.svc = (function () {
         sleep: function (count, cmd, cbf) {
             sleepstat.count = count;  //rcv appropriately truncated|restored
             sleepstat.cmd = cmd;      //queue on next status update
-            sleepstat.cbf = cbf; },
+            sleepstat.cbf = cbf || null;
+            if(cmd === "cancel") {
+                //Play as if starting from scratch.  Setting up a new queue
+                //has substantial lag, and state before playing is unreliable.
+                mgrs.mp.playSong(); } },
         playSong: function (path) {  //need entire queue, not just song
             if(!app.scr.stubbed("startPlayback", path, notePlaybackState)) {
                 mgrs.ios.call("startPlayback", deckPaths(), function (stat) {
@@ -351,7 +356,7 @@ app.svc = (function () {
                 return false; }  //no corresponding queue
             if(!qs[rmo.qname].q.length) {
                 jt.log("ios.retv no pending mssages in queue " + rmo.qname +
-                       ". Ignoring.");
+                       ". Ignoring " + jt.ellipsis(JSON.stringify(rmo), 300));
                 return false; }
             if(qs[rmo.qname].q[0].fname !== rmo.fname) {
                 jt.log("ios.retv queue " + rmo.qname + " expected fname " +
