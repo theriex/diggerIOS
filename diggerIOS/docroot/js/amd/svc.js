@@ -1,4 +1,4 @@
-/*global app, jt, Android */
+/*global app, jt */
 /*jslint browser, white, long, unordered */
 
 //Server communications for IOS platform
@@ -241,6 +241,68 @@ app.svc = (function () {
     }());
 
 
+    //log queue parameter improves logged message content for readability.
+    mgrs.lqm = (function () {
+        function logformat (mobj, fixedDetail) {
+            const mes = [mobj.qname, mobj.msgnum, mobj.fname, fixedDetail];
+            return mes.join(":"); }
+        function readablePath (sgi) {
+            return (sgi.path.slice(sgi.path.indexOf("?") + 4) +
+                    "\"" + jt.ellipsis(sgi.ti, 20) + "\""); }
+        function improveStatusSyncSend (mobj) {
+            var itxt = String(mobj.det.length) + " songs";
+            const logmax = 5;
+            const playstate = app.deck.getPlaybackState(true, "ssd");
+            const sgs = playstate.qsi.slice(0, logmax).map((sgi) =>
+                readablePath(sgi));
+            itxt += "[" + sgs.join(",");
+            if(mobj.det.length > logmax) {
+                itxt += "..."; }
+            itxt += "]";
+            return logformat(mobj, itxt); }
+        function improveWriteConfigSend (mobj) {
+            var itxt = "";
+            const detobj = JSON.parse(mobj.det);  //caller serialized
+            if(detobj && detobj.acctsinfo && detobj.acctsinfo.currid) {
+                const acct = detobj.acctsinfo.accts.find((acc) =>
+                    acc.dsId === detobj.acctsinfo.currid);
+                if(acct && acct.settings && acct.settings.ctrls) {
+                    const settingsJSON = JSON.stringify(acct.settings.ctrls);
+                    itxt = logformat"settings:" + settingsJSON; } }
+            return logformat(mobj, itxt; }
+        function improveSpecificMessage (io, mobj) {
+            var itxt = "";
+            switch(mobj.fname) {
+            case "statusSync":
+                if(io === "snd") {
+                    itxt = improveStatusSyncSend(mobj); }
+                break;
+            case "writeConfig":
+                if(io === "snd") {
+                    itxt = improveWriteConfigSend(mobj); }
+                break; }
+            return itxt; }
+        function improveLogText (io, mstr, mobj) {
+            var itxt = "";
+            try {
+                itxt = improveSpecificMessage(io, mobj);
+            } catch(e) {
+                jt.log("lqm.improveSpecificMessage failed: " + e); }
+            if(!itxt) {
+                itxt = mstr;
+                if(itxt.length > 250) {
+                    itxt = itxt.slice(0, 150) + "..." + itxt.slice(-50); } }
+            return itxt; }
+    return {
+        //mobj fields: qname, msgnum, fname, det
+        improveSendLogTxt: function (mstr, mobj) {
+            return improveLogText("snd", mstr, mobj); },
+        improveReturnLogTxt: function (mstr, mobj) {
+            return improveLogText("rcv", mstr, mobj); }
+    };  //end mgrs.lqm returned functions
+    }());
+
+
     //ios manager handles calls between js and ios.  All calls are across
     //separate processes with no synchronous support, so calls are queued to
     //avoid unintuitive sequencing, deadlock, starvation etc.  Standard API
@@ -261,16 +323,14 @@ app.svc = (function () {
                 return iosFuncName; }
             return "main"; }
         function callIOS (queueName, mqo) {
-            var logmsg;
             var param = mqo.pobj || "";
             if(param && typeof param === "object") {  //object or array
                 param = JSON.stringify(param); }
-            const msg = (queueName + ":" + mqo.msgnum + ":" + mqo.fname + ":" +
-                         param);
-            logmsg = msg;
-            if(logmsg.length > 250) {
-                logmsg = msg.slice(0, 150) + "..." + msg.slice(-50); }
-            jt.log("callIOS: " + logmsg);
+            const mes = [queueName, mqo.msgnum, mqo.fname, param];
+            const msg = mes.join(":");
+            jt.log("callIOS: " + mgrs.lqm.improveSendLogTxt(
+                msg, {qname:queueName, msgnum:mqo.msgnum, fname:mqo.fname,
+                      det:mqo.pobj || ""}));
             window.webkit.messageHandlers.diggerMsgHandler.postMessage(msg); }
         function readSerializedObject(txt) {
             var oei = 1;
@@ -313,15 +373,9 @@ app.svc = (function () {
         function unhandledError (code, errtxt) {
             jt.log("Default error handler code: " + code +
                    ", errtxt: " + errtxt); }
-        function logMessageText (mstr) {
-            var logmsg = mstr;
-            if(logmsg.length > 250) {
-                logmsg = mstr.slice(0, 150) + "..." + mstr.slice(-50); }
-            jt.log("ios.retv: " + logmsg); }
         function parseMessageText(mstr) {
             var res = "";
-            logMessageText(mstr);
-            const [qname, msgid, fname, ...msgtxt] = mstr.split(":");
+            const [qnm, msgid, fnm, ...msgtxt] = mstr.split(":");
             res = msgtxt.join(":");
             if(res && (res.startsWith("{") || res.startsWith("["))) {
                 try {
@@ -332,9 +386,11 @@ app.svc = (function () {
                     analyzeJSON(res);
                     res = "Error - parseMessageText failed " + e;
                 } }
-            return {"qname":qname, "msgid":msgid, "fname":fname, "res":res}; }
+            const mobj = {qname:qnm, msgnum:msgid, fname:fnm, det:res};
+            jt.log("ios.retv: " + mgrs.lqm.improveReturnLogTxt(mstr, mobj));
+            return mobj; }
         function parseErrorText (rmo) {
-            var errmsg = rmo.res;
+            var errmsg = rmo.det;
             const emprefix = "Error - ";
             errmsg = errmsg.slice(emprefix.length);
             const codeprefix = "code: ";
@@ -364,7 +420,7 @@ app.svc = (function () {
                        rmo.fname + ". Ignoring.");
                 return false; }
             const expmid = qs[rmo.qname].q[0].msgnum;
-            const rcvmid = parseInt(rmo.msgid, 10);
+            const rcvmid = parseInt(rmo.msgnum, 10);
             if(expmid !== rcvmid) {
                 jt.log("ios.retv queue " + rmo.qname + " fname " + rmo.fname +
                        " expected msgid " + expmid + " but received " +
@@ -396,16 +452,16 @@ app.svc = (function () {
             const rmo = parseMessageText(mstr);
             if(!verifyQueueMatch(rmo)) {  //failure message logged
                 return; }
-            if(typeof rmo.res === "string" && rmo.res.startsWith("Error - ")) {
+            if(typeof rmo.det === "string" && rmo.det.startsWith("Error - ")) {
                 parseErrorText(rmo); }
             mqo = qs[rmo.qname].q.shift();
             try {
                 if(rmo.errmsg) {
                     mqo.errf(rmo.errcode, rmo.errmsg); }
                 else {  //send a modifiable deep copy of results for use by cbf
-                    mqo.cbf(JSON.parse(JSON.stringify(rmo.res))); }
+                    mqo.cbf(JSON.parse(JSON.stringify(rmo.det))); }
             } catch(e) {
-                jt.log("ios.retv " + rmo.qname + " " + rmo.msgid + " " +
+                jt.log("ios.retv " + rmo.qname + " " + rmo.msgnum + " " +
                        rmo.fname + " " +(rmo.errmsg? "error" : "success") +
                        " callback failed: " + e + "  stack: " + e.stack);
             }
