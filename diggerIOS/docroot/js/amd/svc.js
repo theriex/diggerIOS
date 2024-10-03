@@ -268,8 +268,8 @@ app.svc = (function () {
                     acc.dsId === detobj.acctsinfo.currid);
                 if(acct && acct.settings && acct.settings.ctrls) {
                     const settingsJSON = JSON.stringify(acct.settings.ctrls);
-                    itxt = logformat"settings:" + settingsJSON; } }
-            return logformat(mobj, itxt; }
+                    itxt = "settings:" + settingsJSON; } }
+            return logformat(mobj, itxt); }
         function improveSpecificMessage (io, mobj) {
             var itxt = "";
             switch(mobj.fname) {
