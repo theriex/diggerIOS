@@ -278,7 +278,9 @@ app.svc = (function () {
             return logformat(mobj, itxt); }
         function improveWriteDigDat (mobj) {
             var itxt = "";
-            const detobj = JSON.parse(mobj.det);  //caller serialized
+            var detobj = mobj.det;
+            if(typeof detobj === "string") {
+                detobj = JSON.parse(mobj.det); } //caller serialized
             if(detobj.songs) {
                 itxt = " " + Object.keys(detobj.songs).length + " songs."; }
             return logformat(mobj, itxt); }
@@ -343,7 +345,7 @@ app.svc = (function () {
                 param = JSON.stringify(param); }
             const mes = [queueName, mqo.msgnum, mqo.fname, param];
             const msg = mes.join(":");
-            jt.log("callIOS: " + mgrs.lqm.improveSendLogTxt(
+            jt.log("callIOS:" + mgrs.lqm.improveSendLogTxt(
                 msg, {qname:queueName, msgnum:mqo.msgnum, fname:mqo.fname,
                       det:mqo.pobj || ""}));
             window.webkit.messageHandlers.diggerMsgHandler.postMessage(msg); }
@@ -402,7 +404,7 @@ app.svc = (function () {
                     res = "Error - parseMessageText failed " + e;
                 } }
             const mobj = {qname:qnm, msgnum:msgid, fname:fnm, det:res};
-            jt.log("ios.retv: " + mgrs.lqm.improveReturnLogTxt(mstr, mobj));
+            jt.log("ios.retv:" + mgrs.lqm.improveReturnLogTxt(mstr, mobj));
             return mobj; }
         function parseErrorText (rmo) {
             var errmsg = rmo.det;
@@ -463,13 +465,12 @@ app.svc = (function () {
                 if(cruft) {  //restart the queue
                     callIOS(qname, qs[qname].q[0]); } } },
         retv: function (mstr) {
-            var mqo = null;
             const rmo = parseMessageText(mstr);
             if(!verifyQueueMatch(rmo)) {  //failure message logged
                 return; }
             if(typeof rmo.det === "string" && rmo.det.startsWith("Error - ")) {
                 parseErrorText(rmo); }
-            mqo = qs[rmo.qname].q.shift();
+            const mqo = qs[rmo.qname].q[0];  //current message ref
             try {
                 if(rmo.errmsg) {
                     mqo.errf(rmo.errcode, rmo.errmsg); }
@@ -480,6 +481,7 @@ app.svc = (function () {
                        rmo.fname + " " +(rmo.errmsg? "error" : "success") +
                        " callback failed: " + e + "  stack: " + e.stack);
             }
+            qs[rmo.qname].q.shift();  //done processing returned message
             if(qs[rmo.qname].q.length) {  //process next in queue
                 callIOS(rmo.qname, qs[rmo.qname].q[0]); } }
     };  //end mgrs.ios returned functions
