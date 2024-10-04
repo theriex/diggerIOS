@@ -12,6 +12,8 @@ app.svc = (function () {
         const sleepstat = {};
         function deckPaths () {
             const playstate = app.deck.getPlaybackState(true, "paths");
+            if(!app.dataInitialized) {
+                playstate.qsi = []; }
             return JSON.stringify(playstate.qsi); }
         function notePlaybackState (stat, src) {
             if(sleepstat.cbf) {
@@ -160,19 +162,23 @@ app.svc = (function () {
             mgrs.ios.call("writeConfig", pjson, contf); },
         getDatabase: function () { return dbo; },
         loadInitialData: function () {
+            jt.log("loadInitialData readConfig");
             mgrs.ios.call("readConfig", null, function (cobj) {
                 config = cobj || {};
+                jt.log("loadInitialData readDigDat");
                 mgrs.ios.call("readDigDat", null, function (dobj) {
                     dbo = dobj || {};
                     config = config || {};  //default account set up in top.js
                     dbo = mgrs.sg.verifyDatabase(dbo);
-                    //let rest of app know data is ready, then check library:
+                    jt.log("loadInitialData notifying app");
                     app.initialDataLoaded({"config":config, songdata:dbo});
+                    jt.log("loadInitialData setting sg.loadLibrary timeout");
                     if(!dbo.scanned) {
                         setTimeout(mgrs.sg.loadLibrary, 50); } }); }); },
         loadLibrary: function (procdivid) {
             mgrs.sg.loadLibrary(procdivid); },
         loadDigDat: function (cbf) {
+            jt.log("loadDigDat calling readDigDat");
             mgrs.ios.call("readDigDat", null, function (dobj) {
                 dbo = dobj || {};
                 dbo = mgrs.sg.verifyDatabase(dbo);
@@ -270,6 +276,12 @@ app.svc = (function () {
                     const settingsJSON = JSON.stringify(acct.settings.ctrls);
                     itxt = "settings:" + settingsJSON; } }
             return logformat(mobj, itxt); }
+        function improveWriteDigDat (mobj) {
+            var itxt = "";
+            const detobj = JSON.parse(mobj.det);  //caller serialized
+            if(detobj.songs) {
+                itxt = " " + Object.keys(detobj.songs).length + " songs."; }
+            return logformat(mobj, itxt); }
         function improveSpecificMessage (io, mobj) {
             var itxt = "";
             switch(mobj.fname) {
@@ -280,6 +292,9 @@ app.svc = (function () {
             case "writeConfig":
                 if(io === "snd") {
                     itxt = improveWriteConfigSend(mobj); }
+                break;
+            case "writeDigDat":
+                itxt = improveWriteDigDat(mobj);
                 break; }
             return itxt; }
         function improveLogText (io, mstr, mobj) {
