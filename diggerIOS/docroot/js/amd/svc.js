@@ -12,7 +12,9 @@ app.svc = (function () {
         const sleepstat = {};
         function deckPaths () {
             const playstate = app.deck.getPlaybackState(true, "paths");
-            if(!app.dataInitialized) {
+            if(!app.dataInitialized() ||
+               app.player.dispatch("mob", "getFlag",
+                                   "startupCheckForPlayingSong") !== "done") {
                 playstate.qsi = []; }
             return JSON.stringify(playstate.qsi); }
         function notePlaybackState (stat, src) {
