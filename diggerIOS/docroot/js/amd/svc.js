@@ -9,50 +9,49 @@ app.svc = (function () {
 
     //Media Playback manager handles transport and playback calls
     mgrs.mp = (function () {
-        const sleepstat = {};
-        function deckPaths () {
-            const playstate = app.deck.getPlaybackState(true, "paths");
-            if(!app.dataInitialized() ||
-               app.player.dispatch("mob", "getFlag",
-                                   "startupCheckForPlayingSong") !== "done") {
-                playstate.qsi = []; }
-            return JSON.stringify(playstate.qsi); }
-        function notePlaybackState (stat, src) {
-            if(sleepstat.cbf) {
-                sleepstat.cbf(sleepstat.cmd);
-                sleepstat.cbf = null; }
-            if(stat && typeof stat === "object") {  //might be incomplete
-                src = src || "unknown";
-                stat.path = stat.path || "";
-                app.player.dispatch("mob", "notePlaybackStatus", stat); } }
+        function sendPlaybackState (stat) {
+            app.player.dispatch("uiu", "receivePlaybackStatus", stat); }
+        function platRequestPlaybackStatus () {
+            mgrs.ios.call("statusSync", "", sendPlaybackState); }
+        function platPlaySongQueue (pwsid, sq) {
+            const np = app.pdat.songsDict()[sq[0].path];
+            np.lp = new Date().toISOString();
+            //play first, then write digdat, otherwise digdat listeners will
+            //be reacting playback that hasn't started yet.
+            const paths = sq.map((s) => s.path);
+            mgrs.ios.call("startPlayback", paths, function (stat) {
+                sendPlaybackState(stat);
+                app.pdat.writeDigDat(pwsid); }); }
     return {
-        requestStatusUpdate: function (/*contf*/) {
-            if(!app.scr.stubbed("statusSync", null, notePlaybackState)) {
-                mgrs.ios.call("statusSync", deckPaths(), function (stat) {
-                    notePlaybackState(stat, "statusSync"); }); } },
+        //player.plui pbco interface functions:
+        requestPlaybackStatus: function () {
+            app.scr.requestPlaybackStatus(platRequestPlaybackStatus); },
+        playSongQueue: function (pwsid, sq) {
+            app.scr.playSongQueue(platPlaySongQueue, pwsid, sq); },
         pause: function () {
-            mgrs.ios.call("pausePlayback", "", function (stat) {
-                stat.state = "paused";  //actual state change lags behind call
-                notePlaybackState(stat, "pausePlayback"); }); },
+            app.scr.pause(function () {
+                mgrs.ios.call("pausePlayback", "", function (stat) {
+                    stat.state = "paused";  //actual state change lags
+                    sendPlaybackState(stat); }); }); },
         resume: function () {
-            mgrs.ios.call("resumePlayback", "", function (stat) {
-                stat.state = "playing";  //actual state change lags behind call
-                notePlaybackState(stat, "resumePlayback"); }); },
+            app.scr.resume(function () {
+                mgrs.ios.call("resumePlayback", "", function (stat) {
+                    stat.state = "playing";  //actual state change lags
+                    sendPlaybackState(stat); }); }); },
         seek: function (ms) {
-            mgrs.ios.call("seekToOffset", String(ms), function (stat) {
-                notePlaybackState(stat, "seekToOffset"); }); },
-        sleep: function (count, cmd, cbf) {
-            sleepstat.count = count;  //rcv appropriately truncated|restored
-            sleepstat.cmd = cmd;      //queue on next status update
-            sleepstat.cbf = cbf || null;
-            if(cmd === "cancel") {
-                //Play as if starting from scratch.  Setting up a new queue
-                //has substantial lag, and state before playing is unreliable.
-                mgrs.mp.playSong(); } },
-        playSong: function (path) {  //need entire queue, not just song
-            if(!app.scr.stubbed("startPlayback", path, notePlaybackState)) {
-                mgrs.ios.call("startPlayback", deckPaths(), function (stat) {
-                    notePlaybackState(stat, "startPlayback"); }); } }
+            app.scr.seek(function (ms) {
+                mgrs.ios.call("seekToOffset", String(ms), function (stat) {
+                    stat.pos = ms;  //in case state update lags
+                    sendPlaybackState(stat); }); }, ms); },
+        //player initialization
+        beginTransportInterface: function () {
+            app.player.dispatch("uiu", "requestPlaybackStatus", "mp.start",
+                function (status) {
+                    if(status.path) {  //app init found this song playing
+                        const song = app.pdat.songsDict()[status.path];
+                        app.player.notifySongChanged(song, status.state); }
+                    else {  //not already playing
+                        jt.log("mp.beginTransport no playing song"); } }); }
     };  //end mgrs.mp returned functions
     }());
 
@@ -66,35 +65,28 @@ app.svc = (function () {
     }());
 
 
-    //song database processing
-    mgrs.sg = (function () {
-        var dbstatdiv = "topdlgdiv";
-        var apresloadcmd = "";
+    //Local manager handles local environment interaction
+    mgrs.loc = (function () {
+        var dls = null;  //data load state
         function parseAudioSummary (dais) {
-            jt.out(dbstatdiv, "Parsing audio summary...");
             dais = dais.filter((d) => d.title && d.path);  //title and path req
             dais.forEach(function (dai) {
                 dai.artist = dai.artist || "Unknown";
                 dai.album = dai.album || "Singles"; });
             return dais; }
-        function setArtistFromPath (song) {
-            const pes = song.path.split("/");
-            song.ti = pes[pes.length - 1];
-            if(pes.length >= 3) {
-                song.ar = pes[pes.length - 3];
-                song.ab = pes[pes.length - 2]; }
-            else if(pes.length >= 2) {
-                song.ar = pes[pes.length - 2]; } }
+        function checkIfPlayed (song, dai) {
+            if(dai.lp && dai.lp > song.lp) {
+                song.lp = dai.lp;
+                song.pd = "iosqueue";
+                jt.log("Updated lp for " + mgrs.lqm.readablePath(song)); } }
         function mergeAudioData (dais) {
             dais = parseAudioSummary(dais);
-            jt.out(dbstatdiv, "Merging Digger data...");
-            const dbo = mgrs.loc.getDigDat();
+            const dbo = dls.dbo;
             Object.values(dbo.songs).forEach(function (s) {  //mark all deleted
                 s.fq = s.fq || "N";
                 if(!s.fq.startsWith("D")) {
                     s.fq = "D" + s.fq; } });
             dbo.songcount = dais.length;
-            jt.out("countspan", String(dbo.songcount) + "&nbsp;songs");
             dais.forEach(function (dai) {
                 var song = dbo.songs[dai.path];
                 if(!song) {
@@ -102,149 +94,38 @@ app.svc = (function () {
                     song = dbo.songs[dai.path]; }
                 song.path = dai.path;
                 song.fq = song.fq || "N";
-                if(song.fq.startsWith("D")) {
-                    song.fq = song.fq.slice(1); }
+                if(song.fq.startsWith("D")) {  //previously marked as deleted
+                    song.fq = song.fq.slice(1); }  //remove deleted marker
                 song.ti = dai.title;
                 song.ar = dai.artist;
                 song.ab = dai.album;
                 song.genrejson = JSON.stringify(dai.genre);
+                song.mddn = dai.mddn;
+                song.mdtn = dai.mdtn;
                 app.top.dispatch("dbc", "verifySong", song);
-                if(!song.ar) {  //artist required for hub sync
-                    setArtistFromPath(song); } }); }
+                checkIfPlayed(song, dai); }); }
     return {
-        verifyDatabase: function (dbo) {
-            var stat = app.top.dispatch("dbc", "verifyDatabase", dbo);
-            dbo.version = mgrs.gen.plat("appversion");
-            if(stat.verified) { return dbo; }
-            jt.log("svc.db.verifyDatabase re-initializing dbo, received " +
-                   JSON.stringify(stat));
-            dbo = {version:mgrs.gen.plat("appversion"),
-                   scanned:"",  //ISO latest walk of song files
-                   songcount:0,
-                   //songs are indexed by relative path off of musicPath e.g.
-                   //"artistFolder/albumFolder/disc#?/songFile"
-                   songs:{}};
-            return dbo; },
-        loadLibrary: function (procdivid, apresload) {
-            dbstatdiv = procdivid || "topdlgdiv";
-            apresloadcmd = apresload || "";
-            mgrs.ios.call("requestMediaRead", null, function (dais) {
-                mergeAudioData(dais);
-                mgrs.loc.writeDigDat(function () {
-                    jt.out(dbstatdiv, "");
-                    app.top.markIgnoreSongs();
-                    app.top.rebuildKeywords();
-                    app.deck.songDataChanged("rebuildSongData");
-                    if(apresloadcmd === "rebuild") {
-                        app.player.next(); } }); }); }
-    };  //end mgrs.sg returned functions
-    }());
-
-
-    //Local manager handles local environment interaction
-    mgrs.loc = (function () {
-        var config = null;
-        var dbo = null;
-        function synthesizeAlbumPaths(song) {
-            //no relative paths to work with so can only reason from ar/ab
-            //ar may vary (e.g. "main artist featuring whoever")
-            var abs = [];
-            Object.entries(dbo.songs).forEach(function ([p, s]) {
-                if(song.ab === s.ab && (song.ar.startsWith(s.ar) ||
-                                        s.ar.startsWith(song.ar))) {
-                    abs.push(p); } });
-            return abs; }
-    return {
-        getConfig: function () { return config; },
-        getDigDat: function () { return dbo; },
-        songs: function () { return mgrs.loc.getDigDat().songs; },
-        writeConfig: function (cfg, contf/*, errf*/) {
-            config = cfg;
-            const pjson = JSON.stringify(cfg, null, 2);  //readable file
+        readConfig: function (contf/*, errf*/) {
+            mgrs.ios.call("readConfig", null, contf); },
+        readDigDat: function (contfunc, errfunc) {
+            dls = {dbo:{}, contf:contfunc, errf:errfunc};
+            mgrs.ios.call("readDigDat", null, function (dd) {
+                if(dd) {  //found something to read, not ""
+                    dls.dbo = dd; }
+                dls.dbo.version = mgrs.gen.plat("appversion");
+                dls.dbo.songs = dls.dbo.songs || {};
+                jt.log("readDigDat " + Object.keys(dls.dbo.songs).length +
+                       " songs.");
+                mgrs.ios.call("requestMediaRead", null, function (dais) {
+                    jt.log("merging audio data into dls");
+                    mergeAudioData(dais);
+                    dls.contf(dls.dbo); }); }); },
+        writeConfig: function (config, ignore/*optobj*/, contf/*, errf*/) {
+            const pjson = JSON.stringify(config, null, 2);  //readable file
             mgrs.ios.call("writeConfig", pjson, contf); },
-        getDatabase: function () { return dbo; },
-        loadInitialData: function () {
-            jt.log("loadInitialData readConfig");
-            mgrs.ios.call("readConfig", null, function (cobj) {
-                config = cobj || {};
-                jt.log("loadInitialData readDigDat");
-                mgrs.ios.call("readDigDat", null, function (dobj) {
-                    dbo = dobj || {};
-                    config = config || {};  //default account set up in top.js
-                    dbo = mgrs.sg.verifyDatabase(dbo);
-                    jt.log("loadInitialData notifying app");
-                    app.initialDataLoaded({"config":config, songdata:dbo});
-                    jt.log("loadInitialData setting sg.loadLibrary timeout");
-                    if(!dbo.scanned) {
-                        setTimeout(mgrs.sg.loadLibrary, 50); } }); }); },
-        loadLibrary: function (procdivid) {
-            mgrs.sg.loadLibrary(procdivid); },
-        loadDigDat: function (cbf) {
-            jt.log("loadDigDat calling readDigDat");
-            mgrs.ios.call("readDigDat", null, function (dobj) {
-                dbo = dobj || {};
-                dbo = mgrs.sg.verifyDatabase(dbo);
-                cbf(dbo); }); },
-        writeDigDat: function (cbf) {
-            var stat = app.top.dispatch("dbc", "verifyDatabase", dbo);
-            if(!stat.verified) {
-                return jt.err("writeDigDat got bad data not writing: " +
-                              JSON.stringify(stat)); }
+        writeDigDat: function (dbo, ignore/*optobj*/, contf/*, errf*/) {
             const datstr = JSON.stringify(dbo, null, 2);
-            mgrs.ios.call("writeDigDat", datstr, cbf); },
-        saveSongs: function (songs, contf/*, errf*/) {
-            var upds = [];  //actual dbo.songs to provide to contf
-            songs.forEach(function (song) {
-                app.copyUpdatedSongData(dbo.songs[song.path], song);
-                upds.push(dbo.songs[song.path]); });
-            mgrs.loc.writeDigDat(function () {
-                app.top.dispatch("srs", "syncToHub");  //sched sync
-                if(contf) {
-                    contf(upds); } }); },
-        noteUpdatedState: function (/*label*/) {
-            //If label === "deck" and the IOS platform needs to keep info
-            //outside the app UI, this is the place to update that data
-            return; },
-        fetchSongs: function (contf/*, errf*/) {  //call stack as if web call
-            setTimeout(function () { contf(dbo.songs); }, 50); },
-        fetchAlbum: function (np, contf/*, errf*/) {
-            const qdat = JSON.stringify({ar:np.ar, ab:np.ab});
-            mgrs.ios.call("fetchAlbum", qdat, function (paths) {
-                if(!paths || !paths.length) {  //should at least find curr song
-                    jt.log("No album song paths returned, synthesizing");
-                    paths = synthesizeAlbumPaths(np); }
-                const songs = app.svc.songs();
-                const abs = paths.map((path) => songs[path]);
-                contf(np, abs); }); },
-        writeSongs: function () {
-            mgrs.loc.writeDigDat(function () {
-                jt.log("svc.loc.writeSongs completed successfully"); }); },
-        procSyncData: function (res) {
-            app.player.logCurrentlyPlaying("svc.loc.procSyncData");
-            const updacc = res[0];
-            updacc.diggerVersion = mgrs.gen.plat("appversion");
-            app.deck.dispatch("hsu", "noteSynchronizedAccount", updacc);
-            app.deck.dispatch("hsu", "updateSynchronizedSongs", res.slice(1));
-            return res; },
-        hubSyncDat: function (data, contf, errf) {
-            if(app.scr.stubbed("hubsync", null, contf, errf)) {
-                return; }
-            const param = {endpoint:"/hubsync", method:"POST", "data":data};
-            mgrs.ios.call("hubSyncDat", JSON.stringify(param), function (res) {
-                app.top.dispatch("srs", "hubStatInfo", "receiving...");
-                res = mgrs.loc.procSyncData(res);
-                contf(res); }, errf); },
-        noteUpdatedSongData: function (updsong) {
-            //on IOS the local database has already been updated, and
-            //local memory is up to date.
-            return dbo.songs[updsong.path]; },
-        makeHubAcctCall: function (verb, endpoint, data, contf, errf) {
-            const fname = "hubAcctCall" + endpoint;
-            if(app.scr.stubbed(fname, null, contf, errf)) {
-                return; }
-            const param = {"endpoint":"/" + endpoint, method:verb,
-                           "data":data || ""};  //Swift needs [String:String]
-            mgrs.ios.call(fname, JSON.stringify(param), contf, errf); }
+            mgrs.ios.call("writeDigDat", datstr, contf); }
     };  //end mgrs.loc returned functions
     }());
 
@@ -254,15 +135,12 @@ app.svc = (function () {
         function logformat (mobj, fixedDetail) {
             const mes = [mobj.qname, mobj.msgnum, mobj.fname, fixedDetail];
             return mes.join(":"); }
-        function readablePath (sgi) {
-            return (sgi.path.slice(sgi.path.indexOf("?") + 4) +
-                    "\"" + jt.ellipsis(sgi.ti, 20) + "\""); }
         function improveStatusSyncSend (mobj) {
             var itxt = String(mobj.det.length) + " songs";
             const logmax = 5;
             const playstate = app.deck.getPlaybackState(true, "ssd");
             const sgs = playstate.qsi.slice(0, logmax).map((sgi) =>
-                readablePath(sgi));
+                mgrs.lqm.readablePath(sgi));
             itxt += "[" + sgs.join(",");
             if(mobj.det.length > logmax) {
                 itxt += "..."; }
@@ -313,6 +191,9 @@ app.svc = (function () {
                     itxt = itxt.slice(0, 150) + "..." + itxt.slice(-50); } }
             return itxt; }
     return {
+        readablePath: function (sgi) {
+            return (sgi.path.slice(sgi.path.indexOf("?") + 4) +
+                    "\"" + jt.ellipsis(sgi.ti, 20) + "\""); },
         //mobj fields: qname, msgnum, fname, det
         improveSendLogTxt: function (mstr, mobj) {
             return improveLogText("snd", mstr, mobj); },
@@ -496,49 +377,46 @@ app.svc = (function () {
             hdm: "loc",   //host data manager is local
             musicPath: "fixed",  //can't change where music files are
             dbPath: "fixed",  //rating info is only kept in app files for now
+            urlOpenSupp: "false",  //opening a tab break webview
+            defaultCollectionStyle: "",   //not permanentCollection
             audsrc: "IOS",
             appversion: "",
             versioncode: ""};
     return {
-        plat: function (key) { return platconf[key]; },
-        updateMultipleSongs: function (songs, contf, errf) {
-            return mgrs.loc.updateMultipleSongs(songs, contf, errf); },
         initialize: function () {  //don't block init of rest of modules
-            setTimeout(mgrs.loc.loadInitialData, 50);
             mgrs.ios.call("getVersionCode", null, function (val) {
                 platconf.versioncode = val; });
             mgrs.ios.call("getAppVersion", null, function (val) {
-                platconf.appversion = val; }); },
+                platconf.appversion = val; });
+            app.boot.addApresModulesInitTask("initPLUI", function () {
+                app.player.dispatch("plui", "initInterface", mgrs.mp); });
+            app.pdat.addApresDataNotificationTask("startPLUI", function () {
+                mgrs.mp.beginTransportInterface(); });
+            app.pdat.svcModuleInitialized(); },
+        plat: function (key) { return platconf[key]; },
+        okToPlay: function (song) {
+            //no known bad file types returned from media query.
+            return song; },
+        passthroughHubCall: function (dets) {
+            const hfn = "hubcall" + dets.endpoint;
+            const pobj = {endpoint:dets.endpoint,
+                          url:dets.url || dets.endpoint,
+                          verb:dets.verb,
+                          dat:dets.dat};
+            const pstr = JSON.stringify(pobj);
+            mgrs.ios.call(hfn, pstr, dets.contf, dets.errf); },
         docContent: function (docurl, contf) {
             var fn = jt.dec(docurl);
             var sidx = fn.lastIndexOf("/");
             if(sidx >= 0) {
                 fn = fn.slice(sidx + 1); }
             mgrs.ios.call("docContent", "docs/" + fn, contf); },
-        makeHubAcctCall: function (verb, endpoint, data, contf, errf) {
-            mgrs.loc.makeHubAcctCall(verb, endpoint, data, contf, errf); },
-        writeConfig: function (cfg, contf, errf) {
-            mgrs.loc.writeConfig(cfg, contf, errf); },
-        fanGroupAction: function (data, contf/*, errf*/) {
-            const param = {endpoint:"/fangrpact", method:"POST", "data":data};
-            //caller writes updated account data
-            mgrs.ios.call("hubfangrpact", JSON.stringify(param), contf); },
-        fanCollab: function (data, contf/*, errf*/) {
-            const param = {endpoint:"/fancollab", method:"POST", "data":data};
-            mgrs.ios.call("hubfanclab", JSON.stringify(param), function (res) {
-                res = mgrs.loc.procSyncData(res);
-                contf(res); }); },
-        fanMessage: function (data, contf/*, errf*/) {
-            if(app.scr.stubbed("hubAcctCallmessages", data, contf)) {
-                return; }
-            const param = {endpoint:"/fanmsg", method:"POST", "data":data};
-            mgrs.ios.call("hubfanmsg", JSON.stringify(param), contf); },
         copyToClipboard: function (txt, contf/*, errf*/) {
             mgrs.ios.call("copyToClipboard", txt, contf); },
         tlasupp: function (act) {
             const unsupp = {
                 "updversionnote":"App Store updates after server",
-                "ignorefldrsbutton":"No music file folders on IOS",
+                "ignorefldrsbutton":"No music file folders on iOS",
                 "readfilesbutton":"All media queried at app startup"};
             return (!act.id || !unsupp[act.id]); }
     };  //end mgrs.gen returned functions
@@ -547,23 +425,20 @@ app.svc = (function () {
 return {
     init: function () { mgrs.gen.initialize(); },
     plat: function (key) { return mgrs.gen.plat(key); },
-    iosReturn: function (jsonstr) { mgrs.ios.retv(jsonstr); },
-    loadDigDat: function (cbf) { mgrs.loc.loadDigDat(cbf); },
-    songs: function () { return mgrs.loc.getDigDat().songs; },
-    fetchSongs: function (cf, ef) { mgrs.loc.fetchSongs(cf, ef); },
-    fetchAlbum: function (np, cf, ef) { mgrs.loc.fetchAlbum(np, cf, ef); },
-    saveSongs: function (songs, cf, ef) { mgrs.loc.saveSongs(songs, cf, ef); },
-    noteUpdatedState: function (label) { mgrs.loc.noteUpdatedState(label); },
-    urlOpenSupp: function () { return false; }, //links break webview
+    readConfig: function (contf, errf) {
+        app.scr.readConfig(mgrs.loc.readConfig, contf, errf); },
+    readDigDat: function (contf, errf) {
+        app.scr.readDigDat(mgrs.loc.readDigDat, contf, errf); },
+    writeConfig: mgrs.loc.writeConfig,
+    writeDigDat: mgrs.loc.writeDigDat,
+    playSongQueue: mgrs.mp.playSongQueue,
+    requestPlaybackStatus: mgrs.mp.requestPlaybackStatus,
+    passthroughHubCall: mgrs.gen.passthroughHubCall,
+    copyToClipboard: mgrs.gen.copyToClipboard,
+    okToPlay: mgrs.gen.okToPlay,
+    iosReturn: function (jsonstr) { mgrs.ios.retv(jsonstr); },  //iOS callback
     docContent: function (du, cf) { mgrs.gen.docContent(du, cf); },
     topLibActionSupported: function (a) { return mgrs.gen.tlasupp(a); },
-    writeConfig: function (cfg, cf, ef) { mgrs.gen.writeConfig(cfg, cf, ef); },
-    dispatch: function (mgrname, fname, ...args) {
-        try {
-            return mgrs[mgrname][fname].apply(app.svc, args);
-        } catch(e) {
-            jt.log("svc.dispatch: " + mgrname + "." + fname + " " + e +
-                   " " + new Error("stack trace").stack);
-        } }
+    extensionInterface: function (/*name*/) { return null; }
 };  //end of returned functions
 }());

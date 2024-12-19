@@ -160,11 +160,11 @@ class DiggerMessageHandler {
     }
 
 
-    //hub calls are differentiated by endpoint and protocol. The fname is
-    //just referenced for return processing.
+    //hub calls are differentiated by url and verb/method. The fname is
+    //just referenced for return processing.  Caller sets url from endpoint.
     func handleHubCall(_ qname:String, _ msgid:String, _ fname:String,
                        _ param:String) {
-        var endpoint = ""
+        var url = ""
         var method = ""
         var data = ""
         if let pd = param.data(using: .utf8) {
@@ -172,26 +172,26 @@ class DiggerMessageHandler {
                 if let pobj = try JSONSerialization.jsonObject(
                      with: pd,
                      options: .mutableContainers) as? [String:String] {
-                    endpoint = pobj["endpoint"]!
-                    method = pobj["method"]!
-                    data = pobj["data"]! }
+                    url = pobj["url"]!
+                    method = pobj["verb"]!
+                    data = pobj["dat"]! }
             } catch {
                 dpu.conlog("handleHubCall JSON unpack failed: \(error)")
             } }
-        if(endpoint == "") {
+        if(url == "") {
             webviewResult(qname, msgid, fname,
-                          "Error - no endpoint specified")
+                          "Error - no url specified")
             return }
         if(hubsession == nil) {
             let scfg = URLSessionConfiguration.default
             hubsession = URLSession(configuration: scfg) }
-        callHub(qname, msgid, fname, endpoint, method, data)
+        callHub(qname, msgid, fname, url, method, data)
     }
 
     func callHub(_ qname:String, _ msgid:String, _ fname:String,
-                 _ endpoint:String, _ method:String, _ data:String) {
-        dpu.conlog("\(qname)\(msgid)\(fname) \(endpoint) \(method) \(data)")
-        let requrl = URL(string: "https://diggerhub.com/api" + endpoint)
+                 _ url:String, _ method:String, _ data:String) {
+        dpu.conlog("\(qname)\(msgid)\(fname) \(url) \(method) \(data)")
+        let requrl = URL(string: "https://diggerhub.com/api" + url)
         var req = URLRequest(url: requrl!)
         req.httpMethod = method
         req.setValue("application/x-www-form-urlencoded",
@@ -470,6 +470,8 @@ class DiggerQueuedPlayerManager {
                                  "title": item.title ?? "",
                                  "artist": item.artist ?? "",
                                  "album": item.albumTitle ?? "",
+                                 "mddn": String(item.discNumber),
+                                 "mdtn": String(item.albumTrackNumber),
                                  "genre": item.genre ?? "",
                                  "lp": lpd.ISO8601Format() ]) } } }
         if(caller == "iosdlg") {
@@ -674,6 +676,7 @@ class DiggerQueuedPlayerManager {
                 let lastplayed = tfmt.string(from:Date.now)
                 song["lp"] = lastplayed
                 dpu.conlog("updPCFD lastplayed: \(lastplayed)")
+                song["pd"] = "iosqueue"
                 writeUpdatedDBO(dj) }
             else {
                 dpu.conlog("updPCFD song not found") } }
