@@ -10,6 +10,10 @@ app.svc = (function () {
     //Media Playback manager handles transport and playback calls
     mgrs.mp = (function () {
         function sendPlaybackState (stat) {
+            if(stat.path) {  //add ti to enhance log tracing
+                const song = app.pdat.songsDict()[stat.path];
+                if(song) {
+                    stat.ti = song.ti; } }
             app.player.dispatch("uiu", "receivePlaybackStatus", stat); }
         function platRequestPlaybackStatus () {
             mgrs.ios.call("statusSync", "", sendPlaybackState); }
@@ -75,10 +79,11 @@ app.svc = (function () {
                 dai.album = dai.album || "Singles"; });
             return dais; }
         function checkIfPlayed (song, dai) {
-            if(dai.lp && dai.lp > song.lp) {
+            if(dai.lp && dai.lp > song.lp) {  //lp updated by iOS
                 song.lp = dai.lp;
+                song.pc = dai.pc;  //also updated by iOS
                 song.pd = "iosqueue";
-                jt.log("Updated lp for " + mgrs.lqm.readablePath(song)); } }
+                jt.log("Updated lp/pc for " + mgrs.lqm.readablePath(song)); } }
         function mergeAudioData (dais) {
             dais = parseAudioSummary(dais);
             const dbo = dls.dbo;
@@ -135,17 +140,6 @@ app.svc = (function () {
         function logformat (mobj, fixedDetail) {
             const mes = [mobj.qname, mobj.msgnum, mobj.fname, fixedDetail];
             return mes.join(":"); }
-        function improveStatusSyncSend (mobj) {
-            var itxt = String(mobj.det.length) + " songs";
-            const logmax = 5;
-            const playstate = app.deck.getPlaybackState(true, "ssd");
-            const sgs = playstate.qsi.slice(0, logmax).map((sgi) =>
-                mgrs.lqm.readablePath(sgi));
-            itxt += "[" + sgs.join(",");
-            if(mobj.det.length > logmax) {
-                itxt += "..."; }
-            itxt += "]";
-            return logformat(mobj, itxt); }
         function improveWriteConfigSend (mobj) {
             var itxt = "";
             const detobj = JSON.parse(mobj.det);  //caller serialized
@@ -167,10 +161,6 @@ app.svc = (function () {
         function improveSpecificMessage (io, mobj) {
             var itxt = "";
             switch(mobj.fname) {
-            case "statusSync":
-                if(io === "snd") {
-                    itxt = improveStatusSyncSend(mobj); }
-                break;
             case "writeConfig":
                 if(io === "snd") {
                     itxt = improveWriteConfigSend(mobj); }
@@ -193,7 +183,7 @@ app.svc = (function () {
     return {
         readablePath: function (sgi) {
             return (sgi.path.slice(sgi.path.indexOf("?") + 4) +
-                    "\"" + jt.ellipsis(sgi.ti, 20) + "\""); },
+                    " \"" + jt.ellipsis(sgi.ti, 20) + "\""); },
         //mobj fields: qname, msgnum, fname, det
         improveSendLogTxt: function (mstr, mobj) {
             return improveLogText("snd", mstr, mobj); },

@@ -136,7 +136,7 @@ class DiggerMessageHandler {
         case "requestAudioSummary":
             return self.dpu.xmitEscape(self.dpu.toJSONString(self.dmp.dais))
         case "statusSync":
-            self.dmp.synchronizePlaybackQueue(param)
+            //self.dmp.synchronizePlaybackQueue(param) -- using hard queues
             return self.dmp.getPlaybackStatus("statusSync")
         case "pausePlayback":
             return self.dmp.pause()
@@ -381,6 +381,7 @@ class DiggerProcessingUtilities {
 class DiggerQueuedPlayerManager {
     let dpu = DiggerProcessingUtilities()
     let smpc = MPMusicPlayerController.systemMusicPlayer
+    let dqpmmode = "stateless"  //or "queuestate" for owned queue logic
     var mibp = [String: MPMediaItem]()   //Media items by path
     var dais = [[String: String]]()      //Digger Audio Items
     var medchk = "unchecked"             //media permissioning dlg stat
@@ -410,7 +411,8 @@ class DiggerQueuedPlayerManager {
     }
 
     @objc func noteMPNPIDC(_ nfn:Notification) {
-        songJustChanged()
+        if(dqpmmode == "queuestate") {
+            songJustChanged() }
     }
 
     @objc func noteAppTerminating(_ nfn:Notification) {
@@ -456,6 +458,10 @@ class DiggerQueuedPlayerManager {
     func initMediaInfo(_ caller:String) {
         mibp = [String: MPMediaItem]()  //reset
         dais = [[String: String]]()  //reset
+        var npp = ""
+        if let nowpi = smpc.nowPlayingItem {
+            if let url = nowpi.assetURL {  //succeeds if local music file
+                npp = url.absoluteString } }
         if(medchk == "asking") { return }  //don't want two threads asking
         if(medchk != "authorized") { return checkMediaAuthorization() }
         let datezero = Date(timeIntervalSince1970: 0)
@@ -465,7 +471,9 @@ class DiggerQueuedPlayerManager {
                 if let url = item.assetURL {  //must have a url to play it
                     let path = url.absoluteString
                     mibp[path] = item
-                    let lpd = item.lastPlayedDate ?? datezero
+                    var lpd = item.lastPlayedDate ?? datezero
+                    if(path == npp) {   //if now playing, use an up-to-date
+                        lpd = Date() }  //lp val.  iOS waits until later.
                     dais.append(["path": path,
                                  "title": item.title ?? "",
                                  "artist": item.artist ?? "",
@@ -473,6 +481,7 @@ class DiggerQueuedPlayerManager {
                                  "mddn": String(item.discNumber),
                                  "mdtn": String(item.albumTrackNumber),
                                  "genre": item.genre ?? "",
+                                 "pc": String(item.playCount),
                                  "lp": lpd.ISO8601Format() ]) } } }
         if(caller == "iosdlg") {
             DispatchQueue.main.async {  //needs to run on main thread
@@ -601,17 +610,52 @@ class DiggerQueuedPlayerManager {
             dpu.conlog("  \(mi.title ?? "NoTitleFound")") }
     }
 
+    func managedQueueSetPlayback(_ updq:[MPMediaItem]) {
+        setQueueProcessingCommand("startPlayback", true)
+        dpu.conlog("startPlayback sleepAfterPath reset")
+        sleepAfterPath = ""
+        consoleLogMediaQueue(updq)
+        setDiggerQueue(updq, "playnow")
+        clearQueueProcessingCommand("startPlayback")
+    }
+
+    func queueStartsWithCurrentlyPlayingSong(_ updq:[MPMediaItem]) -> Bool {
+        let npi = nowPlayingInfo()
+        if let url = updq[0].assetURL {
+            if(npi.path == url.absoluteString) {
+                return true } }
+        return false
+    }
+
+    func hardPlayQueue(_ updq:[MPMediaItem]) {
+        let logpre = "hardPlayQueue"
+        var pos:TimeInterval = 0
+        if(queueStartsWithCurrentlyPlayingSong(updq)) {
+            pos = smpc.currentPlaybackTime }
+        smpc.setQueue(with: miaToMIQD(updq))  //MPMusicPlayerController
+        smpc.prepareToPlay(  //must call for queue updates to take effect
+          completionHandler: { (err) in
+              if let errobj = err {
+                  self.dpu.conlog("\(logpre) prepareToPlay error: \(errobj)")
+                  self.smpc.currentPlaybackTime = pos
+                  self.smpc.play() }  //Prepares the queue if needed.
+              else {
+                  self.dpu.conlog("\(logpre) prepareToPlay success")
+                  //playback state might be left over from previous song so play
+                  //even if smpc.playbackState != MPMusicPlaybackState.playing
+                  self.smpc.currentPlaybackTime = pos
+                  self.smpc.play() } })
+    }
+
     //An explicit call to play takes precedence over all other queue operations.
     func startPlayback(_ param:String) -> String {
         let updq = pathsToMIA(param, "startPlayback")
         var retval = "Error - Empty queue given, startPlayback call ignored"
         if(!updq.isEmpty) {
-            setQueueProcessingCommand("startPlayback", true)
-            dpu.conlog("startPlayback sleepAfterPath reset")
-            sleepAfterPath = ""
-            consoleLogMediaQueue(updq)
-            setDiggerQueue(updq, "playnow")
-            clearQueueProcessingCommand("startPlayback")
+            if(dqpmmode == "queuestate") {
+                managedQueueSetPlayback(updq) }
+            else {  //"stateless"
+                hardPlayQueue(updq) }
             retval = "prepared" }
         return retval
     }
