@@ -372,11 +372,6 @@ class DiggerProcessingUtilities {
 //     - 1st song playing: Replace queue with remainder after song finishes
 //     - 1st song not playing: Replace playing queue
 //
-// Sleep is indicated by the DIGGERSLEEPMARKER song at the end of the queue
-// which sets the sleepAfterPath flag to the last song path.  The flag is unset
-// by startPlayback, resume("unsleep"), or songJustChanged noting playback
-// has been resumed.
-//
 //////////////////////////////////////////////////////////////////////
 class DiggerQueuedPlayerManager {
     let dpu = DiggerProcessingUtilities()
@@ -929,9 +924,6 @@ class DiggerQueuedPlayerManager {
                      options: .mutableContainers) as? [String] {
                     //might get a path with no corresponding local media item
                     for path in psa {
-                        if(path == "DIGGERSLEEPMARKER") {
-                            dpu.conlog("pathsToMIA sleepAfterPath: \(lqsp)")
-                            sleepAfterPath = lqsp }
                         if let mi = mibp[path] {
                             lqsp = path
                             //dpu.conlog("pathsToMIA \(mi.title ?? "NoTitle")")
