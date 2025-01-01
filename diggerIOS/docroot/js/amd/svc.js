@@ -28,25 +28,20 @@ app.svc = (function () {
                 app.pdat.writeDigDat(pwsid); }); }
     return {
         //player.plui pbco interface functions:
-        requestPlaybackStatus: function () {
-            app.scr.requestPlaybackStatus(platRequestPlaybackStatus); },
-        playSongQueue: function (pwsid, sq) {
-            app.scr.playSongQueue(platPlaySongQueue, pwsid, sq); },
+        requestPlaybackStatus: platRequestPlaybackStatus,
+        playSongQueue: platPlaySongQueue,
         pause: function () {
-            app.scr.pause(function () {
-                mgrs.ios.call("pausePlayback", "", function (stat) {
-                    stat.state = "paused";  //actual state change lags
-                    sendPlaybackState(stat); }); }); },
+            mgrs.ios.call("pausePlayback", "", function (stat) {
+                stat.state = "paused";  //actual state change lags
+                sendPlaybackState(stat); }); },
         resume: function () {
-            app.scr.resume(function () {
-                mgrs.ios.call("resumePlayback", "", function (stat) {
-                    stat.state = "playing";  //actual state change lags
-                    sendPlaybackState(stat); }); }); },
+            mgrs.ios.call("resumePlayback", "", function (stat) {
+                stat.state = "playing";  //actual state change lags
+                sendPlaybackState(stat); }); },
         seek: function (ms) {
-            app.scr.seek(function (ms) {
-                mgrs.ios.call("seekToOffset", String(ms), function (stat) {
-                    stat.pos = ms;  //in case state update lags
-                    sendPlaybackState(stat); }); }, ms); },
+            mgrs.ios.call("seekToOffset", String(ms), function (stat) {
+                stat.pos = ms;  //in case state update lags
+                sendPlaybackState(stat); }); },
         //player initialization
         beginTransportInterface: function () {
             app.player.dispatch("uiu", "requestPlaybackStatus", "mp.start",
@@ -320,8 +315,6 @@ app.svc = (function () {
     return {
         call: function (iosFuncName, paramObj, callback, errorf) {
             var cruft = null;
-            if(app.scr.stubbed(iosFuncName, null, callback, errorf)) {
-                return; }
             const qname = qnameForFunc(iosFuncName);
             paramObj = paramObj || "";
             qs[qname].cc += 1;
@@ -415,10 +408,8 @@ app.svc = (function () {
 return {
     init: function () { mgrs.gen.initialize(); },
     plat: function (key) { return mgrs.gen.plat(key); },
-    readConfig: function (contf, errf) {
-        app.scr.readConfig(mgrs.loc.readConfig, contf, errf); },
-    readDigDat: function (contf, errf) {
-        app.scr.readDigDat(mgrs.loc.readDigDat, contf, errf); },
+    readConfig: mgrs.loc.readConfig,
+    readDigDat: mgrs.loc.readDigDat,
     writeConfig: mgrs.loc.writeConfig,
     writeDigDat: mgrs.loc.writeDigDat,
     playSongQueue: mgrs.mp.playSongQueue,
