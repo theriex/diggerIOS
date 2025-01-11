@@ -106,7 +106,12 @@ app.svc = (function () {
                 checkIfPlayed(song, dai); }); }
     return {
         readConfig: function (contf/*, errf*/) {
-            mgrs.ios.call("readConfig", null, contf); },
+            mgrs.ios.call("readConfig", null, function (cfg) {
+                try {
+                    cfg = JSON.parse(cfg);
+                } catch(e) {
+                    jt.log("svc.loc.readConfig error " + e); }
+                contf(cfg); }); },
         readDigDat: function (contfunc, errfunc) {
             dls = {dbo:{}, contf:contfunc, errf:errfunc};
             mgrs.ios.call("readDigDat", null, function (dd) {
@@ -349,7 +354,8 @@ app.svc = (function () {
             }
             qs[rmo.qname].q.shift();  //done processing returned message
             if(qs[rmo.qname].q.length) {  //process next in queue
-                callIOS(rmo.qname, qs[rmo.qname].q[0]); } }
+                setTimeout(function () {  //on a new process stack for isolation
+                    callIOS(rmo.qname, qs[rmo.qname].q[0]); }, 50); } }
     };  //end mgrs.ios returned functions
     }());
 
@@ -360,7 +366,7 @@ app.svc = (function () {
             hdm: "loc",   //host data manager is local
             musicPath: "fixed",  //can't change where music files are
             dbPath: "fixed",  //rating info is only kept in app files for now
-            urlOpenSupp: "false",  //opening a tab break webview
+            urlOpenSupp: false,  //opening a tab breaks webview
             defaultCollectionStyle: "",   //not permanentCollection
             audsrc: "IOS",
             appversion: "",
@@ -380,14 +386,20 @@ app.svc = (function () {
         okToPlay: function (song) {
             //no known bad file types returned from media query.
             return song; },
-        passthroughHubCall: function (dets) {
-            const hfn = "hubcall" + dets.endpoint;
-            const pobj = {endpoint:dets.endpoint,
-                          url:dets.url || dets.endpoint,
-                          verb:dets.verb,
-                          dat:dets.dat};
+        passthroughHubCall: function (qname, reqnum, endpoint, verb, dat) {
+            const hfn = "hubcall" + endpoint;
+            const pobj = {"endpoint":endpoint,
+                          url:endpoint,
+                          "verb":verb,
+                          "dat":dat};
             const pstr = JSON.stringify(pobj);
-            mgrs.ios.call(hfn, pstr, dets.contf, dets.errf); },
+            mgrs.ios.call(hfn, pstr,
+                function (res) {
+                    app.top.dispatch("hcq", "hubResponse", qname, reqnum,
+                                     200, JSON.stringify(res)); },
+                function (code, errdet) {
+                    app.top.dispatch("hcq", "hubResponse", qname, reqnum,
+                                     code, errdet); }); },
         docContent: function (docurl, contf) {
             var fn = jt.dec(docurl);
             var sidx = fn.lastIndexOf("/");
