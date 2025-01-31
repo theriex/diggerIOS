@@ -20,8 +20,11 @@ app.svc = (function () {
         function platPlaySongQueue (pwsid, sq) {
             const np = app.pdat.songsDict()[sq[0].path];
             np.lp = new Date().toISOString();
+            np.pc = np.pc || 0;
+            np.pc += 1;
+            np.pd = "played";
             //play first, then write digdat, otherwise digdat listeners will
-            //be reacting playback that hasn't started yet.
+            //be reacting to playback that hasn't started yet.
             const paths = sq.map((s) => s.path);
             mgrs.ios.call("startPlayback", paths, function (stat) {
                 sendPlaybackState(stat);
@@ -77,10 +80,15 @@ app.svc = (function () {
             if(dai.lp && dai.lp > song.lp) {  //lp updated by iOS
                 song.lp = dai.lp;
                 song.pc = dai.pc;  //also updated by iOS
-                song.pd = "iosqueue";
-                jt.log("Updated lp/pc for " + mgrs.lqm.readablePath(song)); } }
+                //Logging this every time the app first reads all media files
+                //pushes the other startup log details off the top.
+                //jt.log("Updated lp/pc for " + mgrs.lqm.readablePath(song));
+                song.pd = "iosqueue"; } }
         function mergeAudioData (dais) {
+            const logpre = "svc.loc.mergeAudioData ";
             dais = parseAudioSummary(dais);
+            if(!dais.length) {
+                return jt.log(logpre + "no audio data to merge"); }
             const dbo = dls.dbo;
             Object.values(dbo.songs).forEach(function (s) {  //mark all deleted
                 s.fq = s.fq || "N";
@@ -103,14 +111,14 @@ app.svc = (function () {
                 song.mddn = dai.mddn;
                 song.mdtn = dai.mdtn;
                 app.top.dispatch("dbc", "verifySong", song);
-                checkIfPlayed(song, dai); }); }
+                checkIfPlayed(song, dai); });
+            jt.log("svc.loc.mergeAudioData merged " + dais.length + " songs"); }
     return {
         readConfig: function (contf/*, errf*/) {
             mgrs.ios.call("readConfig", null, function (cfg) {
-                try {
-                    cfg = JSON.parse(cfg);
-                } catch(e) {
-                    jt.log("svc.loc.readConfig error " + e); }
+                if(!cfg) {
+                    jt.log("svc.loc.readConfig no cfg returned, set to {}")
+                    cfg = {}; }
                 contf(cfg); }); },
         readDigDat: function (contfunc, errfunc) {
             dls = {dbo:{}, contf:contfunc, errf:errfunc};
@@ -122,7 +130,8 @@ app.svc = (function () {
                 jt.log("readDigDat " + Object.keys(dls.dbo.songs).length +
                        " songs.");
                 mgrs.ios.call("requestMediaRead", null, function (dais) {
-                    jt.log("merging audio data into dls");
+                    jt.log("merging audio data for " + dais.length +
+                           " songs into dls.dbo");
                     mergeAudioData(dais);
                     dls.contf(dls.dbo); }); }); },
         writeConfig: function (config, ignore/*optobj*/, contf/*, errf*/) {
@@ -130,7 +139,15 @@ app.svc = (function () {
             mgrs.ios.call("writeConfig", pjson, contf); },
         writeDigDat: function (dbo, ignore/*optobj*/, contf/*, errf*/) {
             const datstr = JSON.stringify(dbo, null, 2);
-            mgrs.ios.call("writeDigDat", datstr, contf); }
+            mgrs.ios.call("writeDigDat", datstr, contf); },
+        audioDataAvailable: function () {
+            const logpre = "svc.loc.audioDataAvailable ";
+            jt.log(logpre + "refetching audio data");
+            mgrs.ios.call("requestMediaRead", null, function (dais) {
+                jt.log(logpre + "received data for " + dais.length + " songs");
+                dls.dbo = app.pdat.dbObj();  //reset to latest app data
+                mergeAudioData(dais);
+                app.pdat.writeDigDat("svc.loc.updateAudioData"); }); }
     };  //end mgrs.loc returned functions
     }());
 
@@ -158,6 +175,17 @@ app.svc = (function () {
             if(detobj.songs) {
                 itxt = " " + Object.keys(detobj.songs).length + " songs."; }
             return logformat(mobj, itxt); }
+        function improveStatusSync (mobj) {
+            var itxt = "";
+            if(mobj.det) {  //return from call has details object
+                if(mobj.det.path && app.pdat.dbObj()) {
+                    const sd = app.pdat.songsDict();
+                    if(sd) {
+                        const song = sd[mobj.det.path];
+                        if(song) {
+                            mobj.det.ti = song.ti;
+                    itxt = JSON.stringify(mobj.det); } } } }
+            return logformat(mobj, itxt); }
         function improveSpecificMessage (io, mobj) {
             var itxt = "";
             switch(mobj.fname) {
@@ -167,6 +195,9 @@ app.svc = (function () {
                 break;
             case "writeDigDat":
                 itxt = improveWriteDigDat(mobj);
+                break;
+            case "statusSync":
+                itxt = improveStatusSync(mobj);
                 break; }
             return itxt; }
         function improveLogText (io, mstr, mobj) {
@@ -293,9 +324,11 @@ app.svc = (function () {
                 rmo.errcode = 0; }
             rmo.errmsg = errmsg; }
         function handlePushMessage(rmo) {
-            jt.log("handlePushMessage " + JSON.stringify(rmo));
+            jt.log("svc.ios.handlePushMessage " +
+                   jt.ellipsis(JSON.stringify(rmo), 300));
             if(rmo.fname === "initMediaInfo") {
-                mgrs.sg.loadLibrary(); } }  //go get the media
+                const dais = JSON.parse(JSON.stringify(rmo.det));
+                mgrs.loc.audioDataAvailable(); } }
         function verifyQueueMatch(rmo) {
             if(rmo.qname === "iospush") {
                 handlePushMessage(rmo);
