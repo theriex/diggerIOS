@@ -77,6 +77,12 @@ app.svc = (function () {
                 dai.album = dai.album || "Singles"; });
             return dais; }
         function checkIfPlayed (song, dai) {
+            //The iOS system music player may update the lp significantly
+            //after the song has started playing, changing pd:"played" to
+            //"iosqueue".  If a song is skipped, the hope is iOS will not
+            //update the lp, so pd:"skipped" will be preserved, but nothing
+            //is guaranteed.  User can switch players anytime so the only
+            //reliable info is from the dai.
             if(dai.lp && dai.lp > song.lp) {  //lp updated by iOS
                 song.lp = dai.lp;
                 song.pc = dai.pc;  //also updated by iOS
