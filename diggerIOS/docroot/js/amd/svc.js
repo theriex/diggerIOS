@@ -431,6 +431,8 @@ app.svc = (function () {
                           url:endpoint,
                           "verb":verb,
                           "dat":dat};
+            if(pobj.verb.startsWith("raw")) {
+                pobj.verb = pobj.verb.slice(3); }
             const pstr = JSON.stringify(pobj);
             mgrs.ios.call(hfn, pstr,
                 function (res) {

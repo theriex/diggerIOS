@@ -217,9 +217,10 @@ class DiggerMessageHandler {
               var rstr = ""
               if let rdat = result {
                   rstr = String(bytes: rdat, encoding: .utf8)!
-                  //a failed call may have embedded quotes or newlines
-                  rstr = self.dpu.xmitEscape(rstr) }
+                  rstr = self.dpu.xmitEscapeWithNewlines(rstr) }
               if(sc < 200 || sc >= 300) {
+                  //newlines can blow out error display screen real estate
+                  rstr = self.dpu.xmitRemoveEscapedNewlines(rstr)
                   DispatchQueue.main.async {
                       self.webviewResult(
                         qname, msgid, fname,
@@ -277,9 +278,8 @@ class DiggerProcessingUtilities {
         return fileURL
     }
 
-    func xmitEscape(_ json:String) -> String {
-        var ej = json
-        ej = ej.replacingOccurrences(of:"\n", with:" ")
+    func xmitEscapeBase(_ dat:String) -> String {
+        var ej = dat
         ej = ej.replacingOccurrences(of:"\r", with:" ")
         ej = ej.replacingOccurrences(of:"\u{B}", with:" ") //line tab (LT)
         ej = ej.replacingOccurrences(of:"\u{C}", with:" ") //form feed (FF)
@@ -292,6 +292,29 @@ class DiggerProcessingUtilities {
         ej = ej.replacingOccurrences(of:"\\", with:"\\\\")
         ej = ej.replacingOccurrences(of:"\"", with:"\\\"")
         return ej
+    }
+
+    func xmitRemoveNewline(_ dat:String) -> String {
+        return dat.replacingOccurrences(of:"\n", with:" ")
+    }
+
+    //Standard for JSON and similar where whitespace doesn't matter
+    func xmitEscape(_ dat:String) -> String {
+        return xmitEscapeBase(xmitRemoveNewline(dat))
+    }
+
+    func xmitEscapeNewline(_ dat:String) -> String {
+        return dat.replacingOccurrences(of:"\n", with:"\\n")
+    }
+
+    //Standard when dat could be JSON or CSV delimited by newlines
+    func xmitEscapeWithNewlines(_ dat:String) -> String {
+        return xmitEscapeBase(xmitEscapeNewline(dat))
+    }
+
+    //For error message cleanup where newlines can blow out the display.
+    func xmitRemoveEscapedNewlines(_ dat:String) -> String {
+        return dat.replacingOccurrences(of:"\\n", with:" ")
     }
 
     //param is a simple doc file url e.g. "docs/privacy.html"
