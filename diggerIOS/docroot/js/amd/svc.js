@@ -18,11 +18,7 @@ app.svc = (function () {
         function platRequestPlaybackStatus () {
             mgrs.ios.call("statusSync", "", sendPlaybackState); }
         function platPlaySongQueue (pwsid, sq) {
-            const np = app.pdat.songsDict()[sq[0].path];
-            np.lp = new Date().toISOString();
-            np.pc = np.pc || 0;
-            np.pc += 1;
-            np.pd = "played";
+            app.util.updateSongLpPcPd(sq[0].path);
             //play first, then write digdat, otherwise digdat listeners will
             //be reacting to playback that hasn't started yet.
             const paths = sq.map((s) => s.path);
