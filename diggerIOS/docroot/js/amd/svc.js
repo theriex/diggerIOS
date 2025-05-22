@@ -9,6 +9,7 @@ app.svc = (function () {
 
     //Media Playback manager handles transport and playback calls
     mgrs.mp = (function () {
+        const pcc = {qcs:[], dms:1400, tmo:null};  //playback call control
         function sendPlaybackState (stat) {
             if(stat.path) {  //add ti to enhance log tracing
                 const song = app.pdat.songsDict()[stat.path];
@@ -18,13 +19,31 @@ app.svc = (function () {
         function platRequestPlaybackStatus () {
             mgrs.ios.call("statusSync", "", sendPlaybackState); }
         function platPlaySongQueue (pwsid, sq) {
-            app.util.updateSongLpPcPd(sq[0].path);
-            //play first, then write digdat, otherwise digdat listeners will
-            //be reacting to playback that hasn't started yet.
-            const paths = sq.map((s) => s.path);
-            mgrs.ios.call("startPlayback", paths, function (stat) {
-                sendPlaybackState(stat);
-                app.pdat.writeDigDat(pwsid); }); }
+            var lqp = null;
+            if(pcc.qcs.length) {
+                lqp = pcc.qcs[pcc.qcs.length - 1]; }
+            //even if pwsid has changed, or the first playing song in the queue
+            //has changed, the latest queue to play wins.
+            if(lqp) {
+                jt.log("platPlaySongQueue replacing existing call");
+                lqp.pwsid = pwsid;
+                lqp.sq = sq; } //song queue may have updated
+            else {
+                pcc.qcs.push({"pwsid":pwsid, "sq":sq}); }
+            clearTimeout(pcc.tmo);  //clear existing, if any
+            pcc.tmo = setTimeout(function () {
+                pcc.tmo = null;  //note timeout has now happened
+                const task = pcc.qcs.shift();
+                if(task) {
+                    app.util.updateSongLpPcPd(task.sq[0].path);
+                    const paths = task.sq.map((s) => s.path);
+                    //play first, then write digdat, otherwise digdat
+                    //listeners will be reacting to playback that hasn't
+                    //started yet.
+                    mgrs.ios.call("startPlayback", paths, function (stat) {
+                        sendPlaybackState(stat);
+                        app.pdat.writeDigDat(task.pwsid); }); } },
+                                 pcc.dms); }
     return {
         //player.plui pbco interface functions:
         requestPlaybackStatus: platRequestPlaybackStatus,
@@ -119,7 +138,7 @@ app.svc = (function () {
         readConfig: function (contf/*, errf*/) {
             mgrs.ios.call("readConfig", null, function (cfg) {
                 if(!cfg) {
-                    jt.log("svc.loc.readConfig no cfg returned, set to {}")
+                    jt.log("svc.loc.readConfig no cfg returned, set to {}");
                     cfg = {}; }
                 contf(cfg); }); },
         readDigDat: function (contfunc, errfunc) {
@@ -329,7 +348,7 @@ app.svc = (function () {
             jt.log("svc.ios.handlePushMessage " +
                    jt.ellipsis(JSON.stringify(rmo), 300));
             if(rmo.fname === "initMediaInfo") {
-                const dais = JSON.parse(JSON.stringify(rmo.det));
+                //rmo.det might contain read-only dais, but re-fetch
                 mgrs.loc.audioDataAvailable(); } }
         function verifyQueueMatch(rmo) {
             if(rmo.qname === "iospush") {
