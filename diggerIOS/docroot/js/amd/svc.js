@@ -14,7 +14,14 @@ app.svc = (function () {
             if(stat.path) {  //add ti to enhance log tracing
                 const song = app.pdat.songsDict()[stat.path];
                 if(song) {
-                    stat.ti = song.ti; } }
+                    stat.ti = song.ti; }
+                if(stat.state === "playing") {
+                    const lrcvpb = app.player.lastReceivedPlaybackState();
+                    if(lrcvpb && (lrcvpb.state === "playing" &&
+                                  lrcvpb.path === stat.path &&
+                                  lrcvpb.pos === stat.pos)) {
+                        jt.log("svc.mp.sendPlaybackState no playback movement");
+                        stat.state = "paused"; } } }
             app.player.dispatch("uiu", "receivePlaybackStatus", stat); }
         function platRequestPlaybackStatus () {
             mgrs.ios.call("statusSync", "", sendPlaybackState); }
