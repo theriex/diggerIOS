@@ -9,48 +9,56 @@ app.svc = (function () {
 
     //Media Playback manager handles transport and playback calls
     mgrs.mp = (function () {
-        const pcc = {qcs:[], dms:1400, tmo:null};  //playback call control
+        function fixKnownAPIBadData (stat) {  //stat has path
+            const logpre = "svc.mp.fixKnownAPIBadData ";
+            const prevst = app.player.previousReceivedPlaybackStatus();
+            if(!prevst) { return; }  //need prev status to check against
+            stat.apistate = stat.state;  //API reported state for reference
+            stat.apipos = stat.pos;      //API reported position for reference
+            //iPadOS 16.7.11 state may report "playing" after playback ends.
+            //Song is not playing.  The state just got latched.
+            if(stat.state === "playing" && (prevst.state === "playing" ||
+                                            prevst.apistate === "playing") &&
+               prevst.pos === stat.pos) {
+                jt.log(logpre + "pos unchanged, so not playing");
+                stat.state = "paused";
+                return "repaired"; }
+            //iPadOS 16.7.11 pos may report elapsed time from rtz while paused.
+            //The song is not playing, pos is being calculated heuristically.
+            if(stat.state === "paused" && (prevst.state === "paused" ||
+                                           prevst.apistate === "paused") &&
+               prevst.pos !== stat.pos) {  //can be greater or less than
+                jt.log("svc.mp.sendPlaybackState corrected paused pos value");
+                stat.pos = 0;   //reflect the typical rtz behavior.
+                return "repaired"; }
+            return "ok"; }
         function sendPlaybackState (stat) {
-            if(stat.path) {  //add ti to enhance log tracing
+            if(stat.path) {  //real song status, not interim data return
                 const song = app.pdat.songsDict()[stat.path];
-                if(song) {
-                    stat.ti = song.ti; }
-                if(stat.state === "playing") {
-                    const lrcvpb = app.player.lastReceivedPlaybackState();
-                    if(lrcvpb && (lrcvpb.state === "playing" &&
-                                  lrcvpb.path === stat.path &&
-                                  lrcvpb.pos === stat.pos)) {
-                        jt.log("svc.mp.sendPlaybackState no playback movement");
-                        stat.state = "paused"; } } }
+                if(song) {  //not foreign media
+                    stat.ti = song.ti;  //add ti for logging clarity
+                    stat.ts = Date.now();  //add ts for staleness monitoring
+                    fixKnownAPIBadData(stat); } }
             app.player.dispatch("uiu", "receivePlaybackStatus", stat); }
         function platRequestPlaybackStatus () {
             mgrs.ios.call("statusSync", "", sendPlaybackState); }
+        function logSongQueue (logpre, sq) {
+            const qes = sq.slice(0, 4).map((s) =>
+                ({lp:s.lp, path:s.path, ti:jt.ellipsis(s.ti, 30)}));
+            jt.log(logpre + sq.length + " songs " + JSON.stringify(qes)); }
         function platPlaySongQueue (pwsid, sq) {
-            var lqp = null;
-            if(pcc.qcs.length) {
-                lqp = pcc.qcs[pcc.qcs.length - 1]; }
-            //even if pwsid has changed, or the first playing song in the queue
-            //has changed, the latest queue to play wins.
-            if(lqp) {
-                jt.log("platPlaySongQueue replacing existing call");
-                lqp.pwsid = pwsid;
-                lqp.sq = sq; } //song queue may have updated
-            else {
-                pcc.qcs.push({"pwsid":pwsid, "sq":sq}); }
-            clearTimeout(pcc.tmo);  //clear existing, if any
-            pcc.tmo = setTimeout(function () {
-                pcc.tmo = null;  //note timeout has now happened
-                const task = pcc.qcs.shift();
-                if(task) {
-                    app.util.updateSongLpPcPd(task.sq[0].path);
-                    const paths = task.sq.map((s) => s.path);
-                    //play first, then write digdat, otherwise digdat
-                    //listeners will be reacting to playback that hasn't
-                    //started yet.
-                    mgrs.ios.call("startPlayback", paths, function (stat) {
-                        sendPlaybackState(stat);
-                        app.pdat.writeDigDat(task.pwsid); }); } },
-                                 pcc.dms); }
+            const logpre = "svc.platPlaySongQueue ";
+            //system music player queue cannot be read or modified. replace.
+            //playback is not instant. call queue/debounce handled by ios.call
+            app.util.updateSongLpPcPd(sq[0].path);
+            logSongQueue(logpre + pwsid + " ", sq);
+            const paths = sq.map((s) => s.path);
+            //play first, then write digdat, otherwise digdat listeners will
+            //be reacting to playback that hasn't started yet.
+            mgrs.ios.call("startPlayback", paths, function (stat) {
+                jt.log("platPlaySongQueue " + pwsid + " call completed");
+                sendPlaybackState(stat);
+                app.pdat.writeDigDat(pwsid); }); }
     return {
         //player.plui pbco interface functions:
         requestPlaybackStatus: platRequestPlaybackStatus,
@@ -138,6 +146,7 @@ app.svc = (function () {
                 song.genrejson = JSON.stringify(dai.genre);
                 song.mddn = dai.mddn;
                 song.mdtn = dai.mdtn;
+                song.dur = dai.dur;
                 app.top.dispatch("dbc", "verifySong", song);
                 checkIfPlayed(song, dai); });
             jt.log("svc.loc.mergeAudioData merged " + dais.length + " songs"); }

@@ -476,10 +476,6 @@ class DiggerQueuedPlayerManager {
     func initMediaInfo(_ caller:String) {
         mibp = [String: MPMediaItem]()  //reset
         dais = [[String: String]]()  //reset
-        var npp = ""
-        if let nowpi = smpc.nowPlayingItem {
-            if let url = nowpi.assetURL {  //succeeds if local music file
-                npp = url.absoluteString } }
         if(medchk == "asking") { return }  //don't want two threads asking
         if(medchk != "authorized") { return checkMediaAuthorization() }
         let datezero = Date(timeIntervalSince1970: 0)
@@ -489,15 +485,15 @@ class DiggerQueuedPlayerManager {
                 if let url = item.assetURL {  //must have a url to play it
                     let path = url.absoluteString
                     mibp[path] = item
-                    var lpd = item.lastPlayedDate ?? datezero
-                    if(path == npp) {   //if now playing, use an up-to-date
-                        lpd = Date() }  //lp val.  iOS waits until later.
+                    let duration = dpu.timeIntervalToMS(item.playbackDuration)
+                    let lpd = item.lastPlayedDate ?? datezero
                     dais.append(["path": path,
                                  "title": item.title ?? "",
                                  "artist": item.artist ?? "",
                                  "album": item.albumTitle ?? "",
                                  "mddn": String(item.discNumber),
                                  "mdtn": String(item.albumTrackNumber),
+                                 "dur": String(duration),
                                  "genre": item.genre ?? "",
                                  "pc": String(item.playCount),
                                  "lp": lpd.ISO8601Format() ]) } } }
