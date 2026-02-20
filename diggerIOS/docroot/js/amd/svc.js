@@ -115,7 +115,8 @@ app.svc = (function () {
             //reliable info is from the dai.
             if(dai.lp && dai.lp > song.lp) {  //lp updated by iOS
                 song.lp = dai.lp;
-                song.pc = dai.pc;  //also updated by iOS
+                //The pc is the play count within Digger. Across all platforms.
+                //song.pc = dai.pc; Do not import the iOS value.
                 //Logging this every time the app first reads all media files
                 //pushes the other startup log details off the top.
                 //jt.log("Updated lp/pc for " + mgrs.lqm.readablePath(song));
