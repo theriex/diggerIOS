@@ -35,11 +35,25 @@ var linker = (function () {
     }
 
 
+    function copySourceFile (dfp, hfp) {  //digger file path, home file path
+        var txt;
+        const droidRefFiles = ["filter.js", "app.js", "manual.html"];
+        if(droidRefFiles.find((name) => dfp.endsWith(name))) {
+            txt = fs.readFileSync(dfp, "utf8");
+            txt = txt.replaceAll("Android", "Tptsran");
+            txt = txt.replaceAll("android", "tptsran");
+            txt = txt.replaceAll("droid", "dpnac");
+            fs.writeFileSync(hfp, txt, "utf8"); }
+        else {
+            fs.copyFileSync(dfp, hfp); }
+    }
+
+
     function checkUpToDate (hfp, dfp) {
         const hs = fs.statSync(hfp)
         const ds = fs.statSync(dfp)
         if(ds.mtime > hs.mtime) {
-            fs.copyFileSync(dfp, hfp);
+            copySourceFile(dfp, hfp);
             console.log("updated " + hfp); }
         else {
             console.log("   ok   " + hfp); }
@@ -53,7 +67,7 @@ var linker = (function () {
         if(ws.ovr[fname]) { return; }
         if(!jslf(fs, "existsSync", hfp)) {
             if(cmd === "create") {
-                fs.copyFileSync(dfp, hfp);
+                copySourceFile(dfp, hfp);
                 console.log("created " + hfp); }
             else {
                 console.log("missing " + hfp); } }
